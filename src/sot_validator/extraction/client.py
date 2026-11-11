@@ -156,6 +156,7 @@ def _build_default_fixture_site(index: int) -> Site:
     """Build a deterministic fixture Site for 1-indexed site number `index` (`10.{index}.0.0/16`)."""
     site_id = f"site-{index:03d}"
     ts_recent = datetime(2026, 2, 10, 12, 0, 0, tzinfo=timezone.utc)
+    ts_intermediate = datetime(2026, 1, 25, 12, 0, 0, tzinfo=timezone.utc)
     ts_stale = datetime(2025, 9, 1, 8, 30, 0, tzinfo=timezone.utc)
 
     sw_id = f"{site_id}-sw-01"
@@ -170,6 +171,8 @@ def _build_default_fixture_site(index: int) -> Site:
     eq_vm_win_id = f"{site_id}-vm-win-01"
     eq_ups_id = f"{site_id}-ups-01"
     eq_srv_id = f"{site_id}-srv-01"
+    eq_san_id = f"{site_id}-san-01"
+    eq_spare_id = f"{site_id}-spare-01"
 
     p1_id = f"{sw_id}-p1"
     p2_id = f"{sw_id}-p2"
@@ -368,6 +371,28 @@ def _build_default_fixture_site(index: int) -> Site:
             hypervisor_id=None,
             power_state="poweredOff",
             last_seen=ts_stale,
+        ),
+        Equipment(
+            equipment_id=eq_san_id,
+            site_id=site_id,
+            name=f"san-array-{index:03d}-01",
+            category=EquipmentCategory.SAN,
+            assigned_ips=[f"10.{index}.10.40"],
+            connected_ports=[],
+            hypervisor_id=None,
+            power_state=None,
+            last_seen=ts_intermediate,
+        ),
+        Equipment(
+            equipment_id=eq_spare_id,
+            site_id=site_id,
+            name=f"spare-chassis-{index:03d}-01",
+            category=EquipmentCategory.OTHER,
+            assigned_ips=[],
+            connected_ports=[],
+            hypervisor_id=None,
+            power_state=None,
+            last_seen=None,
         ),
     ]
 
