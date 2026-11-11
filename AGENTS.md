@@ -13,14 +13,17 @@
 - `src/sot_validator/` — Core Python package:
   - `models/` — Canonical domain models (`Site`, `NetworkDevice`, `Port`, `VLAN`, `Subnet`, `IPAddress`, `ArpEntry`, `Equipment`, `ValidationSignal`, `ValidationResult`).
   - `extraction/` — Read-only batch extractor (`BatchExtractor`, `SnapshotStore`, `SqlExportSoTClient`, `HtmlScraperSoTClient`, `FixtureSoTClient`).
-  - `signals/` — Passive (`arp.py`, `port_state.py`, `last_seen.py`), `/24`-scoped active (`icmp.py`, `management.py`), and multi-vCenter (`hypervisor.py`) collectors.
+  - `signals/` — Passive (`arp.py`, `port_state.py`, `last_seen.py`), `/24`-scoped active (`icmp.py`, `management.py`), multi-vCenter (`hypervisor.py`), Phase 4 AD/DNS/DHCP (`directory_dns.py`), and Phase 6 APC UPS telemetry (`ups_health.py`) collectors.
   - `classifier/` — Deterministic multi-signal `ClassificationEngine` and `ClassificationPolicy`.
-  - `reporting/` — Multi-format report generators (`JSON`, `CSV`, `Markdown`, and Phase 3 interactive `HTML` operations dashboard).
+  - `reporting/` — Multi-format report generators (`JSON`, `CSV`, `Markdown`, and interactive `HTML` operations dashboard).
   - `history/` — Phase 2 multi-run validation history store, stale streak tracker, and state-drift analyzer.
-  - `remediation/` — Phase 1/2 dry-run action plans, quarantine graduation policies, SHA-256 signed approval manifests, and gated remediation executor with rollback journal.
+  - `remediation/` — Phase 1/2 dry-run action plans, quarantine graduation policies, SHA-256 signed approval manifests, gated remediation executor with rollback journal, and Phase 4 Extreme switch port/PoE reclamation planner (`port_reclamation.py`).
   - `reconciliation/` — Phase 3 reverse discovery & untracked inventory ("Shadow IT") reconciler and SoT import template generator.
   - `campaign/` — Phase 3 multi-site rolling campaign orchestrator, WAN/vCenter outage circuit breakers, and alert sinks.
-  - `cli.py` — Unified CLI runner (`extract`, `validate`, `report`, `run`, `history`, `quarantine`, `remediate`, `reconcile`, `campaign`).
+  - `connectors/` — Phase 4 live pilot connector transports and pre-flight cutover validator.
+  - `migration/` — Phase 5 NetBox / Nautobot golden inventory exporter and dual-run parity / readiness scorecard checker.
+  - `itsm/` — Phase 6 ServiceNow / Jira change-ticket governance and approval synchronization sink.
+  - `cli.py` — Unified CLI runner (`extract`, `validate`, `report`, `run`, `history`, `quarantine`, `remediate`, `reconcile`, `campaign`, `reclaim-ports`, `migrate-export`, `migration-parity`, `ups-health`, `itsm-sync`).
 - `tests/` — `pytest` unit and integration tests.
 - `docs/` — Architecture, discovery notes, and SoT API/schema specifications.
 - `factory/` — Software factory scripts and gate configuration (`factory/checks.sh` and `factory/config.json` are protected paths).

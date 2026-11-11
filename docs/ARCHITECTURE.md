@@ -143,3 +143,30 @@ Once existing SoT records are validated and stale records are safely quarantined
 - **Interactive HTML Operations Dashboard & Unified CLI (`src/sot_validator/reporting/dashboard.py`, `src/sot_validator/cli.py`)**:
   - Generates a self-contained, zero-dependency interactive HTML report (`dashboard_report.html`) featuring per-site `/24` subnet health cards, classification charts, stale-streak quarantine queues, untracked asset reconciliation tables, and client-side search/filtering.
   - Extends `python3 -m sot_validator` with `history`, `quarantine`, `remediate`, `reconcile`, and `campaign` subcommands.
+
+### Phase 4: Enterprise Windows/AD & DNS/DHCP Correlation, Extreme Switch Port/PoE Reclamation & Live Pilot Cutover
+With ~90% of VMs running Windows and ~100 sites running Extreme Networks switches and APC UPSs, Phase 4 deepens enterprise signal coverage and automates safe switch port & PoE reclamation:
+- **Active Directory Computer Account & DNS/DHCP Lease Correlation (`src/sot_validator/signals/directory_dns.py`)**:
+  - Correlates SoT server/VM hostnames and IPs against **Active Directory (`lastLogonTimestamp`, `pwdLastSet`, `operatingSystem`, `enabled` account state)**, **DNS (`A`/`PTR` forward/reverse alignment)**, and **DHCP active lease exports** across each site's `/24` subnets.
+  - Resolves ambiguous Windows VMs/servers that block ICMP ping or reside on unpolled hypervisors, and detects stale DNS records or static/DHCP scope collisions.
+- **LLDP Uplink Guard & Staged Extreme Switch Port / PoE Reclamation Planner (`src/sot_validator/remediation/port_reclamation.py`)**:
+  - Evaluates unused Extreme switch access ports (`oper DOWN` and zero ARP/MAC activity across consecutive runs) while enforcing a strict **LLDP / Trunk Uplink Safety Guard** (never proposing shutdown or PoE disablement on inter-switch trunks, router uplinks, WAPs, or APC UPS ports).
+  - Generates vendor-specific **ExtremeXOS (`disable ports <port>`, `configure inline-power disable ports <port>`)** and **VOSS** staged change scripts paired with 1-command rollback scripts (`enable ports <port>`).
+- **Live Production Connector Transports & Pilot Site Readiness Validator (`src/sot_validator/connectors/`)**:
+  - Provides live read-only connector transports (`VSphereRestConnector`, `SnmpWalkConnector`, `AuthenticatedScraperSession`) and a `PilotCutoverValidator` pre-flight check tool that verifies network reachability, credential validity, and schema compatibility for a 3-to-5 site pilot cohort before full 100-site rollout.
+
+### Phase 5: Modern Source of Truth Migration Bridge (NetBox / Nautobot Golden Export & Dual-Run Parity)
+Once legacy SoT records are validated, stale records quarantined, and untracked Shadow IT reconciled, Phase 5 enables retiring the aging legacy SoT in favor of a modern open-source Source of Truth (**NetBox** or **Nautobot**) without migrating years of stale junk data:
+- **Validated Golden Inventory Exporter (`src/sot_validator/migration/exporter.py`)**:
+  - Filters strictly to **`Confirmed Active`** SoT records plus verified **Reconciled Untracked Assets** (excluding `Stale / Likely Unused` quarantined items unless opted in as `decommissioning`) and transforms them into normalized **NetBox / Nautobot** bulk-import payloads (`JSON` / `CSV` / `YAML` bundles covering `Sites`, `VLANs`, `/24 Prefixes`, `DeviceTypes` for Extreme & APC, `Devices`, `Interfaces` with cable/port mappings, `IPAddresses`, `Clusters`, and `VirtualMachines`).
+- **Dual-Run Parity Checker & Migration Readiness Scorecard (`src/sot_validator/migration/parity.py`)**:
+  - Compares legacy SoT state, live network discovery, and target NetBox/Nautobot state during a dual-run transition period, computing a **Per-Site Migration Readiness Score (`0–100%`)** and flagging any blocking discrepancies before a site's `10.x.0.0/16` cutover.
+
+### Phase 6: APC UPS Fleet Health Telemetry, ITSM Change-Ticket Governance & Continuous Drift Prevention
+Phase 6 transitions the system from a periodic validation & migration tool into a continuous fleet governance platform integrated with enterprise ITSM workflows and hardware lifecycle monitoring:
+- **APC UPS Battery, Runtime & Environmental Health Evaluator (`src/sot_validator/signals/ups_health.py`)**:
+  - Evaluates APC `PowerNet-MIB` telemetry (`upsBasicBatteryStatus`, `upsAdvBatteryReplaceIndicator`, `upsAdvBatteryRunTimeRemaining`, `upsAdvBatteryTemperature`, `upsBasicOutputStatus`, `upsAdvInputLineFailCause`) across all ~100 sites to surface proactive hardware maintenance advisories (`BATTERY_REPLACEMENT_NEEDED`, `LOW_RUNTIME_WARNING`, `ON_BATTERY_ALERT`, `HIGH_TEMP_WARNING`) alongside active reachability.
+- **ITSM Change-Ticket & Approval Governance Sink (`src/sot_validator/itsm/`)**:
+  - Bridges `RemediationApprovalManifest`, Extreme switch port reclamation plans, APC UPS battery alerts, and Shadow IT onboarding into **ServiceNow / Jira / Generic ITSM Change Request payloads**, tracking ticket IDs, approval state transitions, and post-implementation verification runs.
+- **Unified Phase 4–6 CLI Subcommands & Extended Operations Dashboard (`src/sot_validator/cli.py`, `src/sot_validator/reporting/dashboard.py`)**:
+  - Adds `reclaim-ports`, `migrate-export`, `migration-parity`, `ups-health`, and `itsm-sync` CLI subcommands and enriches the interactive HTML dashboard with Migration Readiness scorecards, Extreme Port/PoE Reclamation queues, and APC UPS Fleet Health panels.
