@@ -18,13 +18,20 @@ from sot_validator.models import (
 )
 from sot_validator.signals import (
     ArpSignalEvaluator,
+    GuestToolsStatus,
+    HypervisorInventoryProvider,
+    HypervisorVmRecord,
     IcmpProbeCollector,
     LastSeenSignalEvaluator,
     ManagementProbeCollector,
+    MultiVCenterInventoryProvider,
     PortStateSignalEvaluator,
     ScopeViolationError,
     SignalCollector,
     SubnetScopeGuard,
+    VmNicBinding,
+    VmPowerState,
+    VmPowerStateCollector,
 )
 
 __all__ = [
@@ -32,10 +39,14 @@ __all__ = [
     "ArpSignalEvaluator",
     "Equipment",
     "EquipmentCategory",
+    "GuestToolsStatus",
+    "HypervisorInventoryProvider",
+    "HypervisorVmRecord",
     "IPAddress",
     "IcmpProbeCollector",
     "LastSeenSignalEvaluator",
     "ManagementProbeCollector",
+    "MultiVCenterInventoryProvider",
     "NetworkDevice",
     "Port",
     "PortStateSignalEvaluator",
@@ -50,4 +61,7 @@ __all__ = [
     "ValidationClassification",
     "ValidationResult",
     "ValidationSignal",
+    "VmNicBinding",
+    "VmPowerState",
+    "VmPowerStateCollector",
 ]
