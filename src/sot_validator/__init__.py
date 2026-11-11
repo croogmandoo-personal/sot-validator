@@ -16,14 +16,24 @@ from sot_validator.models import (
     ValidationResult,
     ValidationSignal,
 )
+from sot_validator.signals import (
+    ArpSignalEvaluator,
+    LastSeenSignalEvaluator,
+    PortStateSignalEvaluator,
+    SignalCollector,
+)
 
 __all__ = [
     "ArpEntry",
+    "ArpSignalEvaluator",
     "Equipment",
     "EquipmentCategory",
     "IPAddress",
+    "LastSeenSignalEvaluator",
     "NetworkDevice",
     "Port",
+    "PortStateSignalEvaluator",
+    "SignalCollector",
     "SignalStatus",
     "SignalType",
     "Site",
