@@ -11,6 +11,14 @@ from sot_validator.signals.base import (
     resolve_evaluation_time,
     validate_recency_thresholds,
 )
+from sot_validator.signals.directory_dns import (
+    ActiveDirectoryCollector,
+    AdComputerRecord,
+    DhcpLeaseRecord,
+    DnsDhcpLeaseCollector,
+    DnsRecord,
+    normalize_hostname,
+)
 from sot_validator.signals.hypervisor import (
     GuestToolsStatus,
     HypervisorInventoryProvider,
@@ -46,7 +54,12 @@ from sot_validator.signals.port_state import (
 )
 
 __all__ = [
+    "ActiveDirectoryCollector",
+    "AdComputerRecord",
     "ArpSignalEvaluator",
+    "DhcpLeaseRecord",
+    "DnsDhcpLeaseCollector",
+    "DnsRecord",
     "FixtureManagementTransport",
     "GuestToolsStatus",
     "HttpsProbeResponse",
@@ -70,6 +83,7 @@ __all__ = [
     "evaluate_single_port",
     "evaluate_timestamp_recency",
     "normalize_guest_tools_status",
+    "normalize_hostname",
     "normalize_utc_datetime",
     "normalize_vm_power_state",
     "parse_apc_ups_oids",

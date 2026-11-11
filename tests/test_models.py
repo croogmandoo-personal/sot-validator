@@ -38,6 +38,8 @@ def test_enum_exact_values() -> None:
         "SNMP_API_REACHABILITY": "SNMP_API_REACHABILITY",
         "LAST_SEEN_TIMESTAMP": "LAST_SEEN_TIMESTAMP",
         "VM_POWER_STATE": "VM_POWER_STATE",
+        "AD_COMPUTER_ACCOUNT": "AD_COMPUTER_ACCOUNT",
+        "DNS_DHCP_LEASE": "DNS_DHCP_LEASE",
     }
     assert {s.name: s.value for s in SignalStatus} == {
         "ACTIVE": "ACTIVE",
