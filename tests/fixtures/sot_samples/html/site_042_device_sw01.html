@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Legacy SoT — Device sw01.site042.example.internal</title>
+</head>
+<body>
+  <header>
+    <nav>
+      <a href="/sites">All Sites</a>
+      <a href="/sites/site-042">Back to Site site-042</a>
+    </nav>
+  </header>
+
+  <main>
+    <section id="device-detail"
+             data-device-id="dev-042-sw01"
+             data-site-id="site-042"
+             data-hostname="sw01.site042.example.internal"
+             data-vendor="Extreme Networks"
+             data-model="ExtremeSwitching X465-48W"
+             data-role="core-switch"
+             data-mgmt-ip="10.42.1.10"
+             data-mac-address="00:04:96:9a:bc:01"
+             data-room="MDF-101"
+             data-os-version="EXOS 31.7.1.4"
+             data-serial-number="SIM-EX465-04201"
+             data-last-seen="2026-11-11T08:00:00Z">
+      <h1>sw01.site042.example.internal</h1>
+      <p>Vendor: Extreme Networks | Model: ExtremeSwitching X465-48W | Management IP: 10.42.1.10 | Room: MDF-101</p>
+    </section>
+
+    <section id="device-ports">
+      <h2>Switch Ports &amp; Operational Controls</h2>
+      <table id="ports-table">
+        <thead>
+          <tr>
+            <th>Port ID</th>
+            <th>Port Name</th>
+            <th>ifIndex</th>
+            <th>Admin</th>
+            <th>Oper Link</th>
+            <th>PoE Status</th>
+            <th>PoE Draw (W)</th>
+            <th>VLAN</th>
+            <th>Connected Equipment</th>
+            <th>Connected MAC</th>
+            <th>Description</th>
+            <th>Last Change</th>
+            <th>Operational Actions (BLOCKED IN PHASE 1)</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr class="port-row" data-port-id="port-042-sw01-1" data-device-id="dev-042-sw01">
+            <td class="col-port-id">port-042-sw01-1</td>
+            <td class="col-port-name">1:1</td>
+            <td class="col-if-index" data-if-index="1001">1001</td>
+            <td class="col-admin-status">up</td>
+            <td class="col-oper-status">up</td>
+            <td class="col-poe-status">disabled</td>
+            <td class="col-poe-power" data-poe-watts="0.0">0.0</td>
+            <td class="col-vlan-id">10</td>
+            <td class="col-connected-equipment" data-equipment-id="eq-042-esx01">eq-042-esx01</td>
+            <td class="col-connected-mac">00:50:56:60:42:01</td>
+            <td class="col-description">Uplink to ESXi Host esx01 (VM Trunk)</td>
+            <td class="col-last-change" data-last-change="2026-10-15T09:12:00Z">2026-10-15T09:12:00Z</td>
+            <td class="col-ops-actions">
+              <form method="POST" action="/actions/port-admin">
+                <input type="hidden" name="port_id" value="port-042-sw01-1">
+                <input type="hidden" name="target_state" value="down">
+                <button type="submit">Disable Port</button>
+              </form>
+              <form method="POST" action="/actions/poe-toggle">
+                <input type="hidden" name="port_id" value="port-042-sw01-1">
+                <input type="hidden" name="poe_action" value="enable">
+                <button type="submit">Enable PoE</button>
+              </form>
+            </td>
+          </tr>
+          <tr class="port-row" data-port-id="port-042-sw01-2" data-device-id="dev-042-sw01">
+            <td class="col-port-id">port-042-sw01-2</td>
+            <td class="col-port-name">1:2</td>
+            <td class="col-if-index" data-if-index="1002">1002</td>
+            <td class="col-admin-status">up</td>
+            <td class="col-oper-status">up</td>
+            <td class="col-poe-status">disabled</td>
+            <td class="col-poe-power" data-poe-watts="0.0">0.0</td>
+            <td class="col-vlan-id">20</td>
+            <td class="col-connected-equipment" data-equipment-id="eq-042-san01">eq-042-san01</td>
+            <td class="col-connected-mac">00:a0:98:42:20:01</td>
+            <td class="col-description">NetApp SAN Controller A</td>
+            <td class="col-last-change" data-last-change="2026-10-20T14:30:00Z">2026-10-20T14:30:00Z</td>
+            <td class="col-ops-actions">
+              <form method="POST" action="/actions/port-admin">
+                <input type="hidden" name="port_id" value="port-042-sw01-2">
+                <input type="hidden" name="target_state" value="down">
+                <button type="submit">Disable Port</button>
+              </form>
+              <form method="POST" action="/actions/poe-toggle">
+                <input type="hidden" name="port_id" value="port-042-sw01-2">
+                <input type="hidden" name="poe_action" value="enable">
+                <button type="submit">Enable PoE</button>
+              </form>
+            </td>
+          </tr>
+          <tr class="port-row" data-port-id="port-042-sw01-3" data-device-id="dev-042-sw01">
+            <td class="col-port-id">port-042-sw01-3</td>
+            <td class="col-port-name">1:3</td>
+            <td class="col-if-index" data-if-index="1003">1003</td>
+            <td class="col-admin-status">up</td>
+            <td class="col-oper-status">up</td>
+            <td class="col-poe-status">delivering</td>
+            <td class="col-poe-power" data-poe-watts="12.4">12.4</td>
+            <td class="col-vlan-id">30</td>
+            <td class="col-connected-equipment" data-equipment-id="eq-042-ups01">eq-042-ups01</td>
+            <td class="col-connected-mac">00:c0:b7:42:30:01</td>
+            <td class="col-description">APC Smart-UPS NMC3 MDF-101</td>
+            <td class="col-last-change" data-last-change="2026-10-01T06:00:00Z">2026-10-01T06:00:00Z</td>
+            <td class="col-ops-actions">
+              <form method="POST" action="/actions/port-admin">
+                <input type="hidden" name="port_id" value="port-042-sw01-3">
+                <input type="hidden" name="target_state" value="down">
+                <button type="submit">Disable Port</button>
+              </form>
+              <form method="POST" action="/actions/poe-toggle">
+                <input type="hidden" name="port_id" value="port-042-sw01-3">
+                <input type="hidden" name="poe_action" value="disable">
+                <button type="submit">Disable PoE</button>
+              </form>
+            </td>
+          </tr>
+          <tr class="port-row" data-port-id="port-042-sw01-4" data-device-id="dev-042-sw01">
+            <td class="col-port-id">port-042-sw01-4</td>
+            <td class="col-port-name">1:4</td>
+            <td class="col-if-index" data-if-index="1004">1004</td>
+            <td class="col-admin-status">up</td>
+            <td class="col-oper-status">down</td>
+            <td class="col-poe-status">disabled</td>
+            <td class="col-poe-power" data-poe-watts="0.0">0.0</td>
+            <td class="col-vlan-id">10</td>
+            <td class="col-connected-equipment" data-equipment-id="eq-042-srv-legacy01">eq-042-srv-legacy01</td>
+            <td class="col-connected-mac">00:1b:21:42:10:99</td>
+            <td class="col-description">Decommissioned App Server srv-legacy01</td>
+            <td class="col-last-change" data-last-change="2026-06-15T18:00:00Z">2026-06-15T18:00:00Z</td>
+            <td class="col-ops-actions">
+              <form method="POST" action="/actions/port-admin">
+                <input type="hidden" name="port_id" value="port-042-sw01-4">
+                <input type="hidden" name="target_state" value="down">
+                <button type="submit">Disable Port</button>
+              </form>
+              <form method="POST" action="/actions/port-bounce">
+                <input type="hidden" name="port_id" value="port-042-sw01-4">
+                <button type="submit">Bounce Port</button>
+              </form>
+            </td>
+          </tr>
+          <tr class="port-row" data-port-id="port-042-sw01-5" data-device-id="dev-042-sw01">
+            <td class="col-port-id">port-042-sw01-5</td>
+            <td class="col-port-name">1:5</td>
+            <td class="col-if-index" data-if-index="1005">1005</td>
+            <td class="col-admin-status">up</td>
+            <td class="col-oper-status">up</td>
+            <td class="col-poe-status">delivering</td>
+            <td class="col-poe-power" data-poe-watts="15.8">15.8</td>
+            <td class="col-vlan-id">20</td>
+            <td class="col-connected-equipment" data-equipment-id="eq-042-nas-sec01">eq-042-nas-sec01</td>
+            <td class="col-connected-mac">00:11:32:42:20:55</td>
+            <td class="col-description">Isolated Security Vault NAS</td>
+            <td class="col-last-change" data-last-change="2026-11-05T11:00:00Z">2026-11-05T11:00:00Z</td>
+            <td class="col-ops-actions">
+              <form method="POST" action="/actions/port-admin">
+                <input type="hidden" name="port_id" value="port-042-sw01-5">
+                <input type="hidden" name="target_state" value="down">
+                <button type="submit">Disable Port</button>
+              </form>
+              <form method="POST" action="/actions/poe-toggle">
+                <input type="hidden" name="port_id" value="port-042-sw01-5">
+                <input type="hidden" name="poe_action" value="disable">
+                <button type="submit">Disable PoE</button>
+              </form>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+  </main>
+</body>
+</html>

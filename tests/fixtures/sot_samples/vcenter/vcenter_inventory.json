@@ -1,0 +1,268 @@
+{
+  "export_timestamp": "2026-11-11T08:05:00Z",
+  "service_account": "svc-sot-ro@vsphere.local",
+  "instances": [
+    {
+      "vcenter_instance": "vcenter-prod-01",
+      "vcenter_host": "vcenter-prod-01.example.internal",
+      "api_mode": "readonly"
+    },
+    {
+      "vcenter_instance": "vcenter-prod-02",
+      "vcenter_host": "vcenter-prod-02.example.internal",
+      "api_mode": "readonly"
+    }
+  ],
+  "vms": [
+    {
+      "vcenter_instance": "vcenter-prod-01",
+      "vcenter_host": "vcenter-prod-01.example.internal",
+      "site_id": "site-042",
+      "vm_moref": "vm-10421",
+      "bios_uuid": "421a0042-0001-4000-8000-0050569a4211",
+      "vm_name": "win-dc01.site042",
+      "guest_hostname": "win-dc01.site042.example.internal",
+      "guest_os_family": "windows",
+      "guest_os_full_name": "Microsoft Windows Server 2022 (64-bit)",
+      "power_state": "poweredOn",
+      "tools_status": "toolsOk",
+      "tools_heartbeat": "green",
+      "icmp_blocked_by_host_firewall": true,
+      "nics": [
+        {
+          "nic_label": "Network adapter 1",
+          "mac_address": "00:50:56:9a:42:11",
+          "ip_addresses": ["10.42.10.21"],
+          "vlan_id": 10,
+          "connected": true
+        }
+      ],
+      "last_updated": "2026-11-11T08:04:30Z"
+    },
+    {
+      "vcenter_instance": "vcenter-prod-01",
+      "vcenter_host": "vcenter-prod-01.example.internal",
+      "site_id": "site-042",
+      "vm_moref": "vm-10422",
+      "bios_uuid": "421a0042-0002-4000-8000-0050569a4212",
+      "vm_name": "win-print02.site042",
+      "guest_hostname": "win-print02.site042.example.internal",
+      "guest_os_family": "windows",
+      "guest_os_full_name": "Microsoft Windows Server 2019 (64-bit)",
+      "power_state": "poweredOff",
+      "tools_status": "toolsNotRunning",
+      "tools_heartbeat": "gray",
+      "icmp_blocked_by_host_firewall": true,
+      "nics": [
+        {
+          "nic_label": "Network adapter 1",
+          "mac_address": "00:50:56:9a:42:12",
+          "ip_addresses": ["10.42.10.22"],
+          "vlan_id": 10,
+          "connected": false
+        }
+      ],
+      "last_updated": "2026-11-11T08:04:30Z"
+    },
+    {
+      "vcenter_instance": "vcenter-prod-01",
+      "vcenter_host": "vcenter-prod-01.example.internal",
+      "site_id": "site-042",
+      "vm_moref": "vm-10423",
+      "bios_uuid": "421a0042-0003-4000-8000-0050569a4213",
+      "vm_name": "win-file01.site042",
+      "guest_hostname": "win-file01.site042.example.internal",
+      "guest_os_family": "windows",
+      "guest_os_full_name": "Microsoft Windows Server 2022 (64-bit)",
+      "power_state": "poweredOn",
+      "tools_status": "toolsOk",
+      "tools_heartbeat": "green",
+      "icmp_blocked_by_host_firewall": true,
+      "nics": [
+        {
+          "nic_label": "Network adapter 1",
+          "mac_address": "00:50:56:9a:42:13",
+          "ip_addresses": ["10.42.10.23"],
+          "vlan_id": 10,
+          "connected": true
+        }
+      ],
+      "last_updated": "2026-11-11T08:04:30Z"
+    },
+    {
+      "vcenter_instance": "vcenter-prod-01",
+      "vcenter_host": "vcenter-prod-01.example.internal",
+      "site_id": "site-042",
+      "vm_moref": "vm-10424",
+      "bios_uuid": "421a0042-0004-4000-8000-0050569a4214",
+      "vm_name": "win-sql01.site042",
+      "guest_hostname": "win-sql01.site042.example.internal",
+      "guest_os_family": "windows",
+      "guest_os_full_name": "Microsoft Windows Server 2022 (64-bit)",
+      "power_state": "poweredOn",
+      "tools_status": "toolsOk",
+      "tools_heartbeat": "green",
+      "icmp_blocked_by_host_firewall": true,
+      "nics": [
+        {
+          "nic_label": "Network adapter 1",
+          "mac_address": "00:50:56:9a:42:14",
+          "ip_addresses": ["10.42.10.24"],
+          "vlan_id": 10,
+          "connected": true
+        }
+      ],
+      "last_updated": "2026-11-11T08:04:30Z"
+    },
+    {
+      "vcenter_instance": "vcenter-prod-01",
+      "vcenter_host": "vcenter-prod-01.example.internal",
+      "site_id": "site-042",
+      "vm_moref": "vm-10425",
+      "bios_uuid": "421a0042-0005-4000-8000-0050569a4215",
+      "vm_name": "win-wms01.site042",
+      "guest_hostname": "win-wms01.site042.example.internal",
+      "guest_os_family": "windows",
+      "guest_os_full_name": "Microsoft Windows Server 2022 (64-bit)",
+      "power_state": "poweredOn",
+      "tools_status": "toolsOk",
+      "tools_heartbeat": "green",
+      "icmp_blocked_by_host_firewall": true,
+      "nics": [
+        {
+          "nic_label": "Network adapter 1",
+          "mac_address": "00:50:56:9a:42:15",
+          "ip_addresses": ["10.42.10.25"],
+          "vlan_id": 10,
+          "connected": true
+        }
+      ],
+      "last_updated": "2026-11-11T08:04:30Z"
+    },
+    {
+      "vcenter_instance": "vcenter-prod-02",
+      "vcenter_host": "vcenter-prod-02.example.internal",
+      "site_id": "site-042",
+      "vm_moref": "vm-20421",
+      "bios_uuid": "421a0042-0006-4000-8000-0050569a4216",
+      "vm_name": "win-app01.site042",
+      "guest_hostname": "win-app01.site042.example.internal",
+      "guest_os_family": "windows",
+      "guest_os_full_name": "Microsoft Windows Server 2022 (64-bit)",
+      "power_state": "poweredOn",
+      "tools_status": "toolsOk",
+      "tools_heartbeat": "green",
+      "icmp_blocked_by_host_firewall": true,
+      "nics": [
+        {
+          "nic_label": "Network adapter 1",
+          "mac_address": "00:50:56:9a:42:16",
+          "ip_addresses": ["10.42.10.26"],
+          "vlan_id": 10,
+          "connected": true
+        }
+      ],
+      "last_updated": "2026-11-11T08:04:45Z"
+    },
+    {
+      "vcenter_instance": "vcenter-prod-02",
+      "vcenter_host": "vcenter-prod-02.example.internal",
+      "site_id": "site-042",
+      "vm_moref": "vm-20422",
+      "bios_uuid": "421a0042-0007-4000-8000-0050569a4217",
+      "vm_name": "win-rds01.site042",
+      "guest_hostname": "win-rds01.site042.example.internal",
+      "guest_os_family": "windows",
+      "guest_os_full_name": "Microsoft Windows Server 2019 (64-bit)",
+      "power_state": "poweredOn",
+      "tools_status": "toolsOk",
+      "tools_heartbeat": "green",
+      "icmp_blocked_by_host_firewall": true,
+      "nics": [
+        {
+          "nic_label": "Network adapter 1",
+          "mac_address": "00:50:56:9a:42:17",
+          "ip_addresses": ["10.42.10.27"],
+          "vlan_id": 10,
+          "connected": true
+        }
+      ],
+      "last_updated": "2026-11-11T08:04:45Z"
+    },
+    {
+      "vcenter_instance": "vcenter-prod-02",
+      "vcenter_host": "vcenter-prod-02.example.internal",
+      "site_id": "site-042",
+      "vm_moref": "vm-20423",
+      "bios_uuid": "421a0042-0008-4000-8000-0050569a4218",
+      "vm_name": "win-av01.site042",
+      "guest_hostname": "win-av01.site042.example.internal",
+      "guest_os_family": "windows",
+      "guest_os_full_name": "Microsoft Windows Server 2022 (64-bit)",
+      "power_state": "poweredOn",
+      "tools_status": "toolsOk",
+      "tools_heartbeat": "green",
+      "icmp_blocked_by_host_firewall": true,
+      "nics": [
+        {
+          "nic_label": "Network adapter 1",
+          "mac_address": "00:50:56:9a:42:18",
+          "ip_addresses": ["10.42.10.28"],
+          "vlan_id": 10,
+          "connected": true
+        }
+      ],
+      "last_updated": "2026-11-11T08:04:45Z"
+    },
+    {
+      "vcenter_instance": "vcenter-prod-02",
+      "vcenter_host": "vcenter-prod-02.example.internal",
+      "site_id": "site-042",
+      "vm_moref": "vm-20424",
+      "bios_uuid": "421a0042-0009-4000-8000-0050569a4219",
+      "vm_name": "win-wsus01.site042",
+      "guest_hostname": "win-wsus01.site042.example.internal",
+      "guest_os_family": "windows",
+      "guest_os_full_name": "Microsoft Windows Server 2022 (64-bit)",
+      "power_state": "poweredOn",
+      "tools_status": "toolsOk",
+      "tools_heartbeat": "green",
+      "icmp_blocked_by_host_firewall": true,
+      "nics": [
+        {
+          "nic_label": "Network adapter 1",
+          "mac_address": "00:50:56:9a:42:19",
+          "ip_addresses": ["10.42.10.29"],
+          "vlan_id": 10,
+          "connected": true
+        }
+      ],
+      "last_updated": "2026-11-11T08:04:45Z"
+    },
+    {
+      "vcenter_instance": "vcenter-prod-02",
+      "vcenter_host": "vcenter-prod-02.example.internal",
+      "site_id": "site-042",
+      "vm_moref": "vm-20425",
+      "bios_uuid": "421a0042-0010-4000-8000-0050569a4220",
+      "vm_name": "lnx-syslog01.site042",
+      "guest_hostname": "lnx-syslog01.site042.example.internal",
+      "guest_os_family": "linux",
+      "guest_os_full_name": "Ubuntu Linux (64-bit)",
+      "power_state": "poweredOn",
+      "tools_status": "toolsOk",
+      "tools_heartbeat": "green",
+      "icmp_blocked_by_host_firewall": false,
+      "nics": [
+        {
+          "nic_label": "Network adapter 1",
+          "mac_address": "00:50:56:9a:42:20",
+          "ip_addresses": ["10.42.10.30"],
+          "vlan_id": 10,
+          "connected": true
+        }
+      ],
+      "last_updated": "2026-11-11T08:04:45Z"
+    }
+  ]
+}

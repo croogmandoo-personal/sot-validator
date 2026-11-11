@@ -1,0 +1,9 @@
+equipment_id,site_id,hostname,equipment_type,vendor,model,primary_ip,mac_address,vcenter_instance,vcenter_bios_uuid,vcenter_moref,connected_port_id,last_seen
+eq-042-esx01,site-042,esx01.site042.example.internal,Server,Dell,PowerEdge R750,10.42.1.20,00:50:56:60:42:01,,,,port-042-sw01-1,2026-11-11T07:55:00Z
+eq-042-vm-win01,site-042,win-dc01.site042.example.internal,VM,VMware,Virtual Machine,10.42.10.21,00:50:56:9a:42:11,vcenter-prod-01.example.internal,421a0042-0001-4000-8000-0050569a4211,vm-10421,port-042-sw01-1,2026-11-11T07:58:00Z
+eq-042-vm-win02,site-042,win-print02.site042.example.internal,VM,VMware,Virtual Machine,10.42.10.22,00:50:56:9a:42:12,vcenter-prod-01.example.internal,421a0042-0002-4000-8000-0050569a4212,vm-10422,port-042-sw01-1,2026-07-10T04:15:00Z
+eq-042-srv-legacy01,site-042,srv-legacy01.site042.example.internal,Server,HP,ProLiant DL380 Gen9,10.42.10.99,00:1b:21:42:10:99,,,,port-042-sw01-4,2026-06-15T18:00:00Z
+eq-042-san01,site-042,san01.site042.example.internal,SAN,NetApp,AFF A250,10.42.20.15,00:a0:98:42:20:01,,,,port-042-sw01-2,2026-11-11T07:50:00Z
+eq-042-nas-sec01,site-042,nas-sec01.site042.example.internal,NAS,Synology,RS1221+,10.42.20.55,00:11:32:42:20:55,,,,port-042-sw01-5,2026-09-20T10:00:00Z
+eq-042-ups01,site-042,ups01.site042.example.internal,UPS,APC,Smart-UPS SRT 5000VA RM,10.42.30.10,00:c0:b7:42:30:01,,,,port-042-sw01-3,2026-11-11T07:59:00Z
+eq-042-untracked01,site-042,spare-appliance-closetb,Server,Dell,PowerEdge R640,,,,,,,
