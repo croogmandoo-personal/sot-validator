@@ -28,6 +28,10 @@ from sot_validator.signals.base import (
     resolve_evaluation_time,
     validate_recency_thresholds,
 )
+from sot_validator.signals.directory_dns import (
+    ActiveDirectoryCollector,
+    DnsDhcpLeaseCollector,
+)
 from sot_validator.signals.hypervisor import (
     HypervisorInventoryProvider,
     VmPowerState,
@@ -42,9 +46,11 @@ from sot_validator.signals.port_state import PortStateSignalEvaluator
 
 DEFAULT_SIGNAL_WEIGHTS: dict[SignalType, float] = {
     SignalType.VM_POWER_STATE: 0.45,
+    SignalType.AD_COMPUTER_ACCOUNT: 0.40,
     SignalType.SNMP_API_REACHABILITY: 0.40,
     SignalType.ICMP_REACHABILITY: 0.35,
     SignalType.ARP_RECENCY: 0.35,
+    SignalType.DNS_DHCP_LEASE: 0.35,
     SignalType.PORT_STATE: 0.25,
     SignalType.LAST_SEEN_TIMESTAMP: 0.15,
 }
@@ -55,6 +61,8 @@ _SUBSTANTIVE_STALE_SIGNAL_TYPES: frozenset[SignalType] = frozenset(
         SignalType.PORT_STATE,
         SignalType.VM_POWER_STATE,
         SignalType.LAST_SEEN_TIMESTAMP,
+        SignalType.AD_COMPUTER_ACCOUNT,
+        SignalType.DNS_DHCP_LEASE,
     }
 )
 
@@ -64,6 +72,8 @@ _HIGH_CONFIDENCE_ACTIVE_SIGNAL_TYPES: frozenset[SignalType] = frozenset(
         SignalType.SNMP_API_REACHABILITY,
         SignalType.ARP_RECENCY,
         SignalType.VM_POWER_STATE,
+        SignalType.AD_COMPUTER_ACCOUNT,
+        SignalType.DNS_DHCP_LEASE,
     }
 )
 
@@ -168,8 +178,17 @@ def _is_windows_context(
     target: Optional[Any], signals: Sequence[_EvaluatedSignalView]
 ) -> bool:
     for view in signals:
+        if view.signal.signal_type is SignalType.AD_COMPUTER_ACCOUNT:
+            return True
         details_lower = (view.signal.details or "").lower()
         if "windows" in details_lower or "os=windows" in details_lower:
+            return True
+        os_meta = str(
+            view.signal.metadata.get("operatingSystem")
+            or view.signal.metadata.get("operating_system")
+            or ""
+        ).lower()
+        if "windows" in os_meta:
             return True
     if isinstance(target, Equipment):
         if target.category is EquipmentCategory.VM:
@@ -259,6 +278,8 @@ class ClassificationEngine:
         management_collector: Optional[ManagementProbeCollector] = None,
         vm_collector: Optional[VmPowerStateCollector] = None,
         hypervisor_provider: Optional[HypervisorInventoryProvider] = None,
+        ad_collector: Optional[ActiveDirectoryCollector] = None,
+        dns_dhcp_collector: Optional[DnsDhcpLeaseCollector] = None,
         evaluation_time: Optional[datetime | str] = None,
     ) -> None:
         if policy is not None and not isinstance(policy, ClassificationPolicy):
@@ -303,6 +324,8 @@ class ClassificationEngine:
             if self.hypervisor_provider is not None
             else None
         )
+        self.ad_collector: Optional[ActiveDirectoryCollector] = ad_collector
+        self.dns_dhcp_collector: Optional[DnsDhcpLeaseCollector] = dns_dhcp_collector
 
     def _resolve_eval_time(
         self, evaluation_time: Optional[datetime | str] = None
@@ -396,6 +419,22 @@ class ClassificationEngine:
                     stale_after_days=self.policy.stale_after_days,
                 ),
             ]
+            if self.ad_collector is not None:
+                signals.append(
+                    self.ad_collector.evaluate(
+                        target, site=site, evaluation_time=eval_dt
+                    )
+                )
+            if self.dns_dhcp_collector is not None:
+                signals.append(
+                    self.dns_dhcp_collector.evaluate(
+                        target,
+                        site=site,
+                        ip_addresses=ip_addresses,
+                        scope_guard=scope_guard,
+                        evaluation_time=eval_dt,
+                    )
+                )
             if self.icmp_collector is not None:
                 signals.append(
                     self.icmp_collector.collect_for_device(
@@ -432,6 +471,16 @@ class ClassificationEngine:
                         stale_after_days=self.policy.stale_after_days,
                     )
                 )
+            if self.dns_dhcp_collector is not None:
+                signals.append(
+                    self.dns_dhcp_collector.evaluate(
+                        target,
+                        site=site,
+                        ip_addresses=ip_addresses,
+                        scope_guard=scope_guard,
+                        evaluation_time=eval_dt,
+                    )
+                )
             if self.icmp_collector is not None:
                 signals.append(
                     self.icmp_collector.collect_for_ip(
@@ -447,7 +496,12 @@ class ClassificationEngine:
             return signals
 
         if isinstance(target, Equipment):
-            if not _has_actionable_identifiers(target, site=site) and provider is None:
+            if (
+                not _has_actionable_identifiers(target, site=site)
+                and provider is None
+                and self.ad_collector is None
+                and self.dns_dhcp_collector is None
+            ):
                 return [
                     self.arp_evaluator.evaluate(
                         target,
@@ -561,6 +615,22 @@ class ClassificationEngine:
                     )
                 )
 
+            if self.ad_collector is not None:
+                signals.append(
+                    self.ad_collector.evaluate(
+                        target, site=site, evaluation_time=eval_dt
+                    )
+                )
+            if self.dns_dhcp_collector is not None:
+                signals.append(
+                    self.dns_dhcp_collector.evaluate(
+                        target,
+                        site=site,
+                        ip_addresses=ip_addresses,
+                        scope_guard=scope_guard,
+                        evaluation_time=eval_dt,
+                    )
+                )
             if self.icmp_collector is not None:
                 signals.append(
                     self.icmp_collector.collect_for_equipment(
@@ -650,6 +720,28 @@ class ClassificationEngine:
                         is_intermediate = True
                     else:
                         is_stale = True
+            elif sig.signal_type is SignalType.AD_COMPUTER_ACCOUNT:
+                if status is SignalStatus.INACTIVE:
+                    if (
+                        sig.metadata.get("enabled") is False
+                        or "disabled" in details_lower
+                        or "enabled=false" in details_lower
+                        or sig.metadata.get("account_stale") is True
+                    ):
+                        is_stale = True
+                    elif "intermediate" in details_lower or "<= stale threshold" in details_lower:
+                        is_intermediate = True
+                    else:
+                        is_stale = True
+            elif sig.signal_type is SignalType.DNS_DHCP_LEASE:
+                if status is SignalStatus.INACTIVE:
+                    if (
+                        sig.metadata.get("dns_mismatch") is True
+                        or "dns_mismatch=true" in details_lower
+                    ):
+                        is_intermediate = True
+                    else:
+                        is_stale = True
 
             normalized_sig = (
                 sig
@@ -661,6 +753,7 @@ class ClassificationEngine:
                     age_seconds=age_sec,
                     details=sig.details,
                     source=sig.source,
+                    metadata=sig.metadata,
                 )
             )
             preliminary.append(
@@ -725,10 +818,18 @@ class ClassificationEngine:
             for v in views
             if v.effective_status is not SignalStatus.NOT_APPLICABLE
         ]
+        has_directory_or_dns_match = any(
+            v.signal.signal_type
+            in (SignalType.AD_COMPUTER_ACCOUNT, SignalType.DNS_DHCP_LEASE)
+            for v in applicable_views
+        )
         if (
             not views
             or not applicable_views
-            or not _has_actionable_identifiers(target, site=site)
+            or (
+                not _has_actionable_identifiers(target, site=site)
+                and not has_directory_or_dns_match
+            )
         ):
             rationale = (
                 f"Insufficient Data for {item_type} {resolved_name} ({item_id}): "
@@ -763,6 +864,10 @@ class ClassificationEngine:
         )
         arp_active = _has_status(SignalType.ARP_RECENCY, SignalStatus.ACTIVE)
         vm_active = _has_status(SignalType.VM_POWER_STATE, SignalStatus.ACTIVE)
+        ad_active = _has_status(SignalType.AD_COMPUTER_ACCOUNT, SignalStatus.ACTIVE)
+        dns_dhcp_active = _has_status(
+            SignalType.DNS_DHCP_LEASE, SignalStatus.ACTIVE
+        )
         port_active = _has_status(SignalType.PORT_STATE, SignalStatus.ACTIVE)
         last_seen_active = _has_status(
             SignalType.LAST_SEEN_TIMESTAMP, SignalStatus.ACTIVE
@@ -779,6 +884,15 @@ class ClassificationEngine:
         )
         vm_inactive = _has_status(SignalType.VM_POWER_STATE, SignalStatus.INACTIVE)
         arp_inactive = _has_status(SignalType.ARP_RECENCY, SignalStatus.INACTIVE)
+        ad_disabled = any(
+            v.effective_status is SignalStatus.INACTIVE
+            and (
+                v.signal.metadata.get("enabled") is False
+                or "disabled" in (v.signal.details or "").lower()
+                or "enabled=false" in (v.signal.details or "").lower()
+            )
+            for v in by_type.get(SignalType.AD_COMPUTER_ACCOUNT, ())
+        )
 
         any_error = any(
             v.effective_status is SignalStatus.ERROR for v in effective_views
@@ -799,7 +913,7 @@ class ClassificationEngine:
 
         if snmp_active or icmp_active:
             has_high_confidence_active = True
-        elif vm_active or arp_active:
+        elif vm_active or arp_active or ad_active or (dns_dhcp_active and not ad_disabled and not vm_inactive):
             if icmp_unreachable and not self.policy.windows_vm_ignore_icmp_unreachable:
                 has_high_confidence_active = False
             else:
@@ -884,6 +998,8 @@ class ClassificationEngine:
             or last_seen_active
             or vm_active
             or arp_active
+            or ad_active
+            or dns_dhcp_active
             or sot_claimed_on_conflict
         )
         all_unreachable = all(
@@ -971,11 +1087,15 @@ class ClassificationEngine:
                 base += 0.04
         if SignalType.SNMP_API_REACHABILITY in active_types:
             base = max(base, 0.86)
+        if SignalType.AD_COMPUTER_ACCOUNT in active_types:
+            base = max(base, 0.85)
         if SignalType.ARP_RECENCY in active_types:
             if windows_firewall_override or _is_windows_context(target, views):
                 base = max(base, 0.85)
             else:
                 base = max(base, 0.82)
+        if SignalType.DNS_DHCP_LEASE in active_types:
+            base = max(base, 0.82)
         if SignalType.ICMP_REACHABILITY in active_types:
             base = max(base, 0.82)
         if SignalType.PORT_STATE in active_types:
@@ -996,6 +1116,11 @@ class ClassificationEngine:
         for v in views:
             if v.effective_status in (SignalStatus.INACTIVE, SignalStatus.ERROR):
                 penalty += 0.04
+            elif (
+                v.effective_status is SignalStatus.ACTIVE
+                and v.signal.metadata.get("dns_mismatch") is True
+            ):
+                penalty += 0.04
             elif v.effective_status is SignalStatus.UNREACHABLE:
                 if (
                     windows_firewall_override
@@ -1014,6 +1139,14 @@ class ClassificationEngine:
         if windows_firewall_override and (
             SignalType.VM_POWER_STATE in active_types
             or SignalType.ARP_RECENCY in active_types
+            or SignalType.AD_COMPUTER_ACCOUNT in active_types
+            or (
+                SignalType.DNS_DHCP_LEASE in active_types
+                and not any(
+                    v.signal.metadata.get("dns_mismatch") is True
+                    for v in active_views
+                )
+            )
         ):
             score = max(0.85, score)
 
@@ -1419,9 +1552,17 @@ class ClassificationEngine:
                 )
         return results
 
+    score = classify
+    score_signals = classify_signals
+
+
+ScoringConfig = ClassificationPolicy
+ValidationScorer = ClassificationEngine
 
 __all__ = [
     "ClassificationEngine",
     "ClassificationPolicy",
     "DEFAULT_SIGNAL_WEIGHTS",
+    "ScoringConfig",
+    "ValidationScorer",
 ]
