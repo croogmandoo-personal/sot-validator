@@ -117,3 +117,29 @@ To minimize load on both the legacy SoT and live network infrastructure, signals
 ### Phase 1C: Classification Engine & Reporting
 - **Issue 7 (Classification Engine)**: Implement the rule evaluation engine that combines signals into the 4 target classifications with an explicit evidence trail and configurable thresholds (accounting for Windows VMs blocking ICMP when vCenter/ARP shows active).
 - **Issue 8 (CLI & Reporting)**: Build the CLI runner and multi-format report generator (JSON, CSV, Markdown site summaries) with dry-run hooks for Phase 2 SoT write-back/flagging.
+
+### Phase 2: Historical Tracking, Stale Quarantine & Approval-Gated SoT Remediation
+A single point-in-time batch run is never enough to automatically decommission production infrastructure. Phase 2 introduces multi-run persistence, quarantine graduation policies, human approval manifests, and reversible write-back/cleanup execution:
+- **Validation History & Streak Tracking (`src/sot_validator/history/`)**:
+  - Persists validation runs in a local SQLite/JSON ledger (`HistoryStore`), tracking `consecutive_stale_runs`, `first_seen_stale_at`, `last_confirmed_active_at`, state transition drift (`Confirmed Active` → `Unreachable`, `Stale` → `Confirmed Active` resurrection), and `/24` subnet IP utilization trends across the ~100 sites.
+- **Quarantine Policy & Signed Approval Manifests (`src/sot_validator/remediation/quarantine.py`)**:
+  - Promotes items from `Stale / Likely Unused` to **Quarantine / Cleanup Eligible** only when multi-run streak thresholds (`min_consecutive_stale_runs`, `min_stale_days`, `min_confidence`) are met and the item is not on a protected critical-infrastructure allowlist (e.g., core Extreme switches, APC UPSs, or exempted IPs).
+  - Exports operator-reviewable **Approval Manifests** with SHA-256 integrity digests and per-action decision states (`PENDING`, `APPROVED`, `REJECTED`, `EXEMPT`).
+- **Gated Remediation Executor & Rollback Journal (`src/sot_validator/remediation/executor.py`)**:
+  - Consumes only SHA-256-verified, operator-approved manifests (`--execute-approved-plan <path> --confirm-write`; `dry_run=True` remains the default everywhere else).
+  - Generates paired forward/rollback SQL scripts (`remediate.sql` + `rollback.sql`) for SQL-backed SoT flagging/IP release, and append-only audit rollback journals (`remediation_journal.jsonl`) capturing pre-change snapshots of every modified record.
+
+### Phase 3: Reverse Discovery (Untracked Inventory Reconciliation), Fleet Campaigns & HTML Operations Dashboard
+Once existing SoT records are validated and stale records are safely quarantined, Phase 3 closes the loop by detecting **untracked active equipment ("Shadow IT" / reverse drift)** and enabling continuous 100-site fleet operations:
+- **Reverse Discovery & Untracked Asset Reconciler (`src/sot_validator/reconciliation/`)**:
+  - Compares live discovery feeds (multi-vCenter powered-on VMs, Extreme switch ARP/MAC tables, and `/24` active ICMP/SNMP probe responses) against the SoT snapshot to identify:
+    - `UNTRACKED_VM`: Powered-on Windows/Linux VMs in vCenter missing from the SoT.
+    - `UNTRACKED_IP`: Active ARP/ICMP responders in a site's `/24` blocks with no SoT `IPAddress` assignment.
+    - `UNTRACKED_DEVICE`: Responding Extreme switches, APC UPSs, or servers not registered in the SoT.
+    - `ATTRIBUTE_MISMATCH`: Hostname, MAC address, VLAN, or switch port mapping mismatches between live state and SoT.
+  - Generates SoT onboarding/import templates (`CSV` / `SQL INSERT`) to bring untracked active assets under management.
+- **Multi-Site Campaign Orchestrator & Alerting (`src/sot_validator/campaign/`)**:
+  - Schedules and executes rolling validation waves across site cohorts (`10.x.0.0/16` site batches), enforces outage circuit-breakers (auto-pausing a campaign if an entire site or vCenter spikes to `Unreachable` due to WAN/collector outage), and dispatches structured alert payloads (`AlertSink` for JSON/Webhook/Slack) when critical infrastructure (Extreme switches, APC UPSs) fails validation.
+- **Interactive HTML Operations Dashboard & Unified CLI (`src/sot_validator/reporting/dashboard.py`, `src/sot_validator/cli.py`)**:
+  - Generates a self-contained, zero-dependency interactive HTML report (`dashboard_report.html`) featuring per-site `/24` subnet health cards, classification charts, stale-streak quarantine queues, untracked asset reconciliation tables, and client-side search/filtering.
+  - Extends `python3 -m sot_validator` with `history`, `quarantine`, `remediate`, `reconcile`, and `campaign` subcommands.

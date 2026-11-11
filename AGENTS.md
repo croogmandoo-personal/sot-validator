@@ -10,7 +10,17 @@
 
 ## Repository Structure
 
-- `src/sot_validator/` — Core Python package (domain models, batch extractor, signal collectors, classification engine, reporting, CLI).
+- `src/sot_validator/` — Core Python package:
+  - `models/` — Canonical domain models (`Site`, `NetworkDevice`, `Port`, `VLAN`, `Subnet`, `IPAddress`, `ArpEntry`, `Equipment`, `ValidationSignal`, `ValidationResult`).
+  - `extraction/` — Read-only batch extractor (`BatchExtractor`, `SnapshotStore`, `SqlExportSoTClient`, `HtmlScraperSoTClient`, `FixtureSoTClient`).
+  - `signals/` — Passive (`arp.py`, `port_state.py`, `last_seen.py`), `/24`-scoped active (`icmp.py`, `management.py`), and multi-vCenter (`hypervisor.py`) collectors.
+  - `classifier/` — Deterministic multi-signal `ClassificationEngine` and `ClassificationPolicy`.
+  - `reporting/` — Multi-format report generators (`JSON`, `CSV`, `Markdown`, and Phase 3 interactive `HTML` operations dashboard).
+  - `history/` — Phase 2 multi-run validation history store, stale streak tracker, and state-drift analyzer.
+  - `remediation/` — Phase 1/2 dry-run action plans, quarantine graduation policies, SHA-256 signed approval manifests, and gated remediation executor with rollback journal.
+  - `reconciliation/` — Phase 3 reverse discovery & untracked inventory ("Shadow IT") reconciler and SoT import template generator.
+  - `campaign/` — Phase 3 multi-site rolling campaign orchestrator, WAN/vCenter outage circuit breakers, and alert sinks.
+  - `cli.py` — Unified CLI runner (`extract`, `validate`, `report`, `run`, `history`, `quarantine`, `remediate`, `reconcile`, `campaign`).
 - `tests/` — `pytest` unit and integration tests.
 - `docs/` — Architecture, discovery notes, and SoT API/schema specifications.
 - `factory/` — Software factory scripts and gate configuration (`factory/checks.sh` and `factory/config.json` are protected paths).
@@ -25,9 +35,9 @@
 
 ## Key Conventions & Constraints
 
-1. **Read-Only First Phase**: Never issue mutating commands (port enable/disable, PoE toggles, record deletions, HTTP `POST` form submissions) against the legacy SoT in Phase 1. All SoT scrapers and SQL/export adapters must strictly enforce read-only operations.
+1. **Read-Only Extraction & Gated Remediation**: Extraction and probing adapters (`SoTClient`, `HtmlScraperSoTClient`, `SqlExportSoTClient`, active probes) must strictly enforce read-only operations. Phase 2 remediation defaults to `dry_run=True`; any write-back or SQL remediation execution must require an operator-approved, SHA-256-verified manifest, explicit confirmation flags, and an append-only rollback journal.
 2. **Batch-Oriented & `/24`-Scoped**: Extraction and active network probing must operate in configurable site batches (`10.x.0.0/16` per site, scoped to the ~10 active `/24` subnets and assigned IPs) with bounded concurrency to avoid overloading legacy systems or WAN links.
-3. **Simplicity & Maintainability**: Favor standard library + lightweight Python packages (`pydantic` or `dataclasses`, `httpx`/`requests`, `beautifulsoup4` for scraping, `pytest`). Avoid heavy frameworks or complex external broker requirements.
+3. **Simplicity & Maintainability**: Favor standard library (`dataclasses`, `sqlite3`, `hashlib`, `csv`, `json`, `html.parser`) + `pytest`. Avoid heavy external frameworks or complex broker dependencies.
 4. **Protected Paths**: Never modify `factory/checks.sh` or `factory/config.json` inside factory job branches.
 
 ## Running Checks & Tests
