@@ -27,7 +27,7 @@ that, scoped so it can land as one small pull request.
 
 ## Decide
 
-This project is **CoverCheck** (`covercheck/` and `web/`), a subcontractor Certificate of Insurance (COI) and compliance tracker microSaaS for SMB contractors and property managers; read `SPEC.md` for its full domain and module specification.
+This project is **SoT Validator** (`src/sot_validator/`, `tests/`, and `docs/`), a batch-oriented, read-only inventory validation system for a legacy internal Network Source of Truth (SoT); read `AGENTS.md` and `docs/ARCHITECTURE.md` for its full domain and module specification.
 
 - **ACCEPT** when the request is clear, fits the project, and can be built and
   reviewed as one pull request. If it is too big, accept a smaller first slice
