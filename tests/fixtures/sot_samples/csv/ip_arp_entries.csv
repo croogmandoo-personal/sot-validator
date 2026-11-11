@@ -1,0 +1,10 @@
+ip_id,site_id,subnet_id,ip_address,mac_address,assigned_target_type,assigned_target_id,arp_last_seen,arp_source_device_id
+ip-042-001,site-042,sub-042-001,10.42.1.10,00:04:96:9a:bc:01,network_device,dev-042-sw01,2026-11-11T08:00:00Z,dev-042-sw01
+ip-042-002,site-042,sub-042-001,10.42.1.11,00:04:96:9a:bc:02,network_device,dev-042-sw02,2026-08-01T12:00:00Z,dev-042-sw01
+ip-042-003,site-042,sub-042-001,10.42.1.20,00:50:56:60:42:01,equipment,eq-042-esx01,2026-11-11T07:55:00Z,dev-042-sw01
+ip-042-004,site-042,sub-042-010,10.42.10.21,00:50:56:9a:42:11,equipment,eq-042-vm-win01,2026-11-11T07:58:00Z,dev-042-sw01
+ip-042-005,site-042,sub-042-010,10.42.10.22,00:50:56:9a:42:12,equipment,eq-042-vm-win02,2026-07-10T04:15:00Z,dev-042-sw01
+ip-042-006,site-042,sub-042-010,10.42.10.99,00:1b:21:42:10:99,equipment,eq-042-srv-legacy01,2026-06-15T17:59:00Z,dev-042-sw01
+ip-042-007,site-042,sub-042-020,10.42.20.15,00:a0:98:42:20:01,equipment,eq-042-san01,2026-11-11T07:50:00Z,dev-042-sw01
+ip-042-008,site-042,sub-042-020,10.42.20.55,00:11:32:42:20:55,equipment,eq-042-nas-sec01,2026-09-20T10:00:00Z,dev-042-sw01
+ip-042-009,site-042,sub-042-030,10.42.30.10,00:c0:b7:42:30:01,equipment,eq-042-ups01,2026-11-11T07:59:00Z,dev-042-sw01
