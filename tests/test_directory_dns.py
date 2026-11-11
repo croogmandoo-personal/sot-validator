@@ -469,6 +469,14 @@ def test_scoring_and_classification_with_ad_and_dns_dhcp_signals() -> None:
         site_id="site-042",
         name="Site 42",
         subnets=[Subnet(subnet_id="sub-042-010", site_id="site-042", cidr="10.42.10.0/24")],
+        devices=[
+            NetworkDevice(
+                device_id="dev-042-sw01",
+                site_id="site-042",
+                hostname="sw01.site042.example.internal",
+                management_ip="10.42.10.2",
+            )
+        ],
         ip_addresses=[
             IPAddress(
                 ip="10.42.10.55",
@@ -531,3 +539,16 @@ def test_scoring_and_classification_with_ad_and_dns_dhcp_signals() -> None:
     res_retired = scorer.classify_equipment(site.equipment[1], site=site)
     assert res_retired.classification is ValidationClassification.STALE_LIKELY_UNUSED
     assert res_retired.confidence >= 0.70
+
+    # 4. IPAddress classification invokes both ad_collector and dns_dhcp_collector with non-empty site.devices
+    res_ip_active = scorer.classify_ip(site.ip_addresses[0], site=site)
+    assert res_ip_active.classification is ValidationClassification.CONFIRMED_ACTIVE
+    ip_sig_types = {s.signal_type: s.status for s in res_ip_active.signals}
+    assert ip_sig_types[SignalType.AD_COMPUTER_ACCOUNT] is SignalStatus.ACTIVE
+    assert ip_sig_types[SignalType.DNS_DHCP_LEASE] is SignalStatus.ACTIVE
+
+    res_ip_retired = scorer.classify_ip(site.ip_addresses[1], site=site)
+    assert res_ip_retired.classification is ValidationClassification.STALE_LIKELY_UNUSED
+    retired_ip_sig_types = {s.signal_type: s.status for s in res_ip_retired.signals}
+    assert retired_ip_sig_types[SignalType.AD_COMPUTER_ACCOUNT] is SignalStatus.INACTIVE
+    assert retired_ip_sig_types[SignalType.DNS_DHCP_LEASE] is SignalStatus.INACTIVE

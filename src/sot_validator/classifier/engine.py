@@ -471,6 +471,12 @@ class ClassificationEngine:
                         stale_after_days=self.policy.stale_after_days,
                     )
                 )
+            if self.ad_collector is not None:
+                signals.append(
+                    self.ad_collector.evaluate(
+                        target, site=site, evaluation_time=eval_dt
+                    )
+                )
             if self.dns_dhcp_collector is not None:
                 signals.append(
                     self.dns_dhcp_collector.evaluate(

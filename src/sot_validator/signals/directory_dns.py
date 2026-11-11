@@ -388,7 +388,7 @@ class ActiveDirectoryCollector(SignalCollector):
                 for dev in site.devices:
                     if (
                         target.assigned_object_id == dev.device_id
-                        or target.management_ip == target.ip
+                        or dev.management_ip == target.ip
                     ):
                         if dev.hostname not in hosts:
                             hosts.append(dev.hostname)
