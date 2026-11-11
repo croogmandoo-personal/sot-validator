@@ -1,0 +1,6 @@
+port_id,device_id,port_name,if_index,admin_status,oper_status,poe_status,poe_power_w,vlan_id,connected_equipment_id,connected_mac,description,last_change
+port-042-sw01-1,dev-042-sw01,1:1,1001,up,up,disabled,0.0,10,eq-042-esx01,00:50:56:60:42:01,Uplink to ESXi Host esx01 (VM Trunk),2026-10-15T09:12:00Z
+port-042-sw01-2,dev-042-sw01,1:2,1002,up,up,disabled,0.0,20,eq-042-san01,00:a0:98:42:20:01,NetApp SAN Controller A,2026-10-20T14:30:00Z
+port-042-sw01-3,dev-042-sw01,1:3,1003,up,up,delivering,12.4,30,eq-042-ups01,00:c0:b7:42:30:01,APC Smart-UPS NMC3 MDF-101,2026-10-01T06:00:00Z
+port-042-sw01-4,dev-042-sw01,1:4,1004,up,down,disabled,0.0,10,eq-042-srv-legacy01,00:1b:21:42:10:99,Decommissioned App Server srv-legacy01,2026-06-15T18:00:00Z
+port-042-sw01-5,dev-042-sw01,1:5,1005,up,up,delivering,15.8,20,eq-042-nas-sec01,00:11:32:42:20:55,Isolated Security Vault NAS,2026-11-05T11:00:00Z

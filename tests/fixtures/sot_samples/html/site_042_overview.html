@@ -1,0 +1,347 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Legacy SoT — Site site-042 Overview</title>
+</head>
+<body>
+  <header>
+    <nav>
+      <a href="/sites">All Sites</a>
+      <a href="/sites/site-042">Site Overview</a>
+      <a href="/sites/site-042/subnets">Subnets &amp; ARP</a>
+      <a href="/sites/site-042/equipment">Equipment</a>
+    </nav>
+  </header>
+
+  <main>
+    <section id="site-overview"
+             data-site-id="site-042"
+             data-site-name="SF Regional Distribution Center 42"
+             data-site-prefix="10.42.0.0/16">
+      <h1 class="site-name">SF Regional Distribution Center 42</h1>
+      <dl class="site-metadata">
+        <dt>Site ID</dt>
+        <dd class="site-id">site-042</dd>
+        <dt>Summary Allocation</dt>
+        <dd class="site-prefix">10.42.0.0/16</dd>
+        <dt>Address</dt>
+        <dd class="site-address">742 Industrial Pkwy, South San Francisco, CA 94080</dd>
+        <dt>Contact Name</dt>
+        <dd class="site-contact-name">Jordan Rivera</dd>
+        <dt>Contact Email</dt>
+        <dd class="site-contact-email">netops-site042@example.internal</dd>
+        <dt>Contact Phone</dt>
+        <dd class="site-contact-phone">+1-650-555-0142</dd>
+      </dl>
+      <h2>Rooms</h2>
+      <ul class="room-list">
+        <li class="room-item" data-room-id="MDF-101">MDF-101</li>
+        <li class="room-item" data-room-id="IDF-201">IDF-201</li>
+        <li class="room-item" data-room-id="UPS-Closet-B">UPS-Closet-B</li>
+      </ul>
+      <h2>Network Devices</h2>
+      <ul class="device-links">
+        <li><a href="/sites/site-042/devices/dev-042-sw01" data-device-id="dev-042-sw01">sw01.site042.example.internal (10.42.1.10)</a></li>
+        <li><a href="/sites/site-042/devices/dev-042-sw02" data-device-id="dev-042-sw02">sw02.site042.example.internal (10.42.1.11)</a></li>
+      </ul>
+    </section>
+
+    <section id="site-subnets">
+      <h2>Allocated /24 Subnets (within 10.42.0.0/16)</h2>
+      <table id="subnets-table">
+        <thead>
+          <tr>
+            <th>Subnet ID</th>
+            <th>VLAN ID</th>
+            <th>VLAN Name</th>
+            <th>CIDR</th>
+            <th>Gateway IP</th>
+            <th>Description</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr class="subnet-row" data-subnet-id="sub-042-001" data-site-id="site-042">
+            <td class="col-subnet-id">sub-042-001</td>
+            <td class="col-vlan-id" data-vlan-id="1">1</td>
+            <td class="col-vlan-name">MGMT-NET</td>
+            <td class="col-cidr" data-cidr="10.42.1.0/24">10.42.1.0/24</td>
+            <td class="col-gateway-ip">10.42.1.1</td>
+            <td class="col-description">Network &amp; Infrastructure Management</td>
+          </tr>
+          <tr class="subnet-row" data-subnet-id="sub-042-010" data-site-id="site-042">
+            <td class="col-subnet-id">sub-042-010</td>
+            <td class="col-vlan-id" data-vlan-id="10">10</td>
+            <td class="col-vlan-name">SERVER-PROD</td>
+            <td class="col-cidr" data-cidr="10.42.10.0/24">10.42.10.0/24</td>
+            <td class="col-gateway-ip">10.42.10.1</td>
+            <td class="col-description">Production Servers &amp; Virtual Machines</td>
+          </tr>
+          <tr class="subnet-row" data-subnet-id="sub-042-020" data-site-id="site-042">
+            <td class="col-subnet-id">sub-042-020</td>
+            <td class="col-vlan-id" data-vlan-id="20">20</td>
+            <td class="col-vlan-name">STORAGE-SAN</td>
+            <td class="col-cidr" data-cidr="10.42.20.0/24">10.42.20.0/24</td>
+            <td class="col-gateway-ip">10.42.20.1</td>
+            <td class="col-description">Storage Area Network &amp; Backup</td>
+          </tr>
+          <tr class="subnet-row" data-subnet-id="sub-042-030" data-site-id="site-042">
+            <td class="col-subnet-id">sub-042-030</td>
+            <td class="col-vlan-id" data-vlan-id="30">30</td>
+            <td class="col-vlan-name">FACILITY-UPS</td>
+            <td class="col-cidr" data-cidr="10.42.30.0/24">10.42.30.0/24</td>
+            <td class="col-gateway-ip">10.42.30.1</td>
+            <td class="col-description">Facility Power &amp; Environmental Monitoring</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="site-ip-arp">
+      <h2>IP Assignments &amp; ARP Discovery Table</h2>
+      <table id="ip-arp-table">
+        <thead>
+          <tr>
+            <th>IP ID</th>
+            <th>Subnet ID</th>
+            <th>IP Address</th>
+            <th>MAC Address</th>
+            <th>Target Type</th>
+            <th>Target ID</th>
+            <th>ARP Last Seen</th>
+            <th>ARP Source Device</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr class="ip-arp-row" data-ip-id="ip-042-001" data-site-id="site-042" data-subnet-id="sub-042-001">
+            <td class="col-ip-id">ip-042-001</td>
+            <td class="col-subnet-id">sub-042-001</td>
+            <td class="col-ip-address" data-ip="10.42.1.10">10.42.1.10</td>
+            <td class="col-mac-address" data-mac="00:04:96:9a:bc:01">00:04:96:9a:bc:01</td>
+            <td class="col-target-type" data-target-type="network_device">network_device</td>
+            <td class="col-target-id" data-target-id="dev-042-sw01">dev-042-sw01</td>
+            <td class="col-arp-last-seen" data-arp-last-seen="2026-11-11T08:00:00Z">2026-11-11T08:00:00Z</td>
+            <td class="col-arp-source" data-arp-source-device-id="dev-042-sw01">dev-042-sw01</td>
+          </tr>
+          <tr class="ip-arp-row" data-ip-id="ip-042-002" data-site-id="site-042" data-subnet-id="sub-042-001">
+            <td class="col-ip-id">ip-042-002</td>
+            <td class="col-subnet-id">sub-042-001</td>
+            <td class="col-ip-address" data-ip="10.42.1.11">10.42.1.11</td>
+            <td class="col-mac-address" data-mac="00:04:96:9a:bc:02">00:04:96:9a:bc:02</td>
+            <td class="col-target-type" data-target-type="network_device">network_device</td>
+            <td class="col-target-id" data-target-id="dev-042-sw02">dev-042-sw02</td>
+            <td class="col-arp-last-seen" data-arp-last-seen="2026-08-01T12:00:00Z">2026-08-01T12:00:00Z</td>
+            <td class="col-arp-source" data-arp-source-device-id="dev-042-sw01">dev-042-sw01</td>
+          </tr>
+          <tr class="ip-arp-row" data-ip-id="ip-042-003" data-site-id="site-042" data-subnet-id="sub-042-001">
+            <td class="col-ip-id">ip-042-003</td>
+            <td class="col-subnet-id">sub-042-001</td>
+            <td class="col-ip-address" data-ip="10.42.1.20">10.42.1.20</td>
+            <td class="col-mac-address" data-mac="00:50:56:60:42:01">00:50:56:60:42:01</td>
+            <td class="col-target-type" data-target-type="equipment">equipment</td>
+            <td class="col-target-id" data-target-id="eq-042-esx01">eq-042-esx01</td>
+            <td class="col-arp-last-seen" data-arp-last-seen="2026-11-11T07:55:00Z">2026-11-11T07:55:00Z</td>
+            <td class="col-arp-source" data-arp-source-device-id="dev-042-sw01">dev-042-sw01</td>
+          </tr>
+          <tr class="ip-arp-row" data-ip-id="ip-042-004" data-site-id="site-042" data-subnet-id="sub-042-010">
+            <td class="col-ip-id">ip-042-004</td>
+            <td class="col-subnet-id">sub-042-010</td>
+            <td class="col-ip-address" data-ip="10.42.10.21">10.42.10.21</td>
+            <td class="col-mac-address" data-mac="00:50:56:9a:42:11">00:50:56:9a:42:11</td>
+            <td class="col-target-type" data-target-type="equipment">equipment</td>
+            <td class="col-target-id" data-target-id="eq-042-vm-win01">eq-042-vm-win01</td>
+            <td class="col-arp-last-seen" data-arp-last-seen="2026-11-11T07:58:00Z">2026-11-11T07:58:00Z</td>
+            <td class="col-arp-source" data-arp-source-device-id="dev-042-sw01">dev-042-sw01</td>
+          </tr>
+          <tr class="ip-arp-row" data-ip-id="ip-042-005" data-site-id="site-042" data-subnet-id="sub-042-010">
+            <td class="col-ip-id">ip-042-005</td>
+            <td class="col-subnet-id">sub-042-010</td>
+            <td class="col-ip-address" data-ip="10.42.10.22">10.42.10.22</td>
+            <td class="col-mac-address" data-mac="00:50:56:9a:42:12">00:50:56:9a:42:12</td>
+            <td class="col-target-type" data-target-type="equipment">equipment</td>
+            <td class="col-target-id" data-target-id="eq-042-vm-win02">eq-042-vm-win02</td>
+            <td class="col-arp-last-seen" data-arp-last-seen="2026-07-10T04:15:00Z">2026-07-10T04:15:00Z</td>
+            <td class="col-arp-source" data-arp-source-device-id="dev-042-sw01">dev-042-sw01</td>
+          </tr>
+          <tr class="ip-arp-row" data-ip-id="ip-042-006" data-site-id="site-042" data-subnet-id="sub-042-010">
+            <td class="col-ip-id">ip-042-006</td>
+            <td class="col-subnet-id">sub-042-010</td>
+            <td class="col-ip-address" data-ip="10.42.10.99">10.42.10.99</td>
+            <td class="col-mac-address" data-mac="00:1b:21:42:10:99">00:1b:21:42:10:99</td>
+            <td class="col-target-type" data-target-type="equipment">equipment</td>
+            <td class="col-target-id" data-target-id="eq-042-srv-legacy01">eq-042-srv-legacy01</td>
+            <td class="col-arp-last-seen" data-arp-last-seen="2026-06-15T17:59:00Z">2026-06-15T17:59:00Z</td>
+            <td class="col-arp-source" data-arp-source-device-id="dev-042-sw01">dev-042-sw01</td>
+          </tr>
+          <tr class="ip-arp-row" data-ip-id="ip-042-007" data-site-id="site-042" data-subnet-id="sub-042-020">
+            <td class="col-ip-id">ip-042-007</td>
+            <td class="col-subnet-id">sub-042-020</td>
+            <td class="col-ip-address" data-ip="10.42.20.15">10.42.20.15</td>
+            <td class="col-mac-address" data-mac="00:a0:98:42:20:01">00:a0:98:42:20:01</td>
+            <td class="col-target-type" data-target-type="equipment">equipment</td>
+            <td class="col-target-id" data-target-id="eq-042-san01">eq-042-san01</td>
+            <td class="col-arp-last-seen" data-arp-last-seen="2026-11-11T07:50:00Z">2026-11-11T07:50:00Z</td>
+            <td class="col-arp-source" data-arp-source-device-id="dev-042-sw01">dev-042-sw01</td>
+          </tr>
+          <tr class="ip-arp-row" data-ip-id="ip-042-008" data-site-id="site-042" data-subnet-id="sub-042-020">
+            <td class="col-ip-id">ip-042-008</td>
+            <td class="col-subnet-id">sub-042-020</td>
+            <td class="col-ip-address" data-ip="10.42.20.55">10.42.20.55</td>
+            <td class="col-mac-address" data-mac="00:11:32:42:20:55">00:11:32:42:20:55</td>
+            <td class="col-target-type" data-target-type="equipment">equipment</td>
+            <td class="col-target-id" data-target-id="eq-042-nas-sec01">eq-042-nas-sec01</td>
+            <td class="col-arp-last-seen" data-arp-last-seen="2026-09-20T10:00:00Z">2026-09-20T10:00:00Z</td>
+            <td class="col-arp-source" data-arp-source-device-id="dev-042-sw01">dev-042-sw01</td>
+          </tr>
+          <tr class="ip-arp-row" data-ip-id="ip-042-009" data-site-id="site-042" data-subnet-id="sub-042-030">
+            <td class="col-ip-id">ip-042-009</td>
+            <td class="col-subnet-id">sub-042-030</td>
+            <td class="col-ip-address" data-ip="10.42.30.10">10.42.30.10</td>
+            <td class="col-mac-address" data-mac="00:c0:b7:42:30:01">00:c0:b7:42:30:01</td>
+            <td class="col-target-type" data-target-type="equipment">equipment</td>
+            <td class="col-target-id" data-target-id="eq-042-ups01">eq-042-ups01</td>
+            <td class="col-arp-last-seen" data-arp-last-seen="2026-11-11T07:59:00Z">2026-11-11T07:59:00Z</td>
+            <td class="col-arp-source" data-arp-source-device-id="dev-042-sw01">dev-042-sw01</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="site-equipment">
+      <h2>Network-Attached Equipment</h2>
+      <table id="equipment-table">
+        <thead>
+          <tr>
+            <th>Equipment ID</th>
+            <th>Hostname</th>
+            <th>Type</th>
+            <th>Vendor</th>
+            <th>Model</th>
+            <th>Primary IP</th>
+            <th>MAC Address</th>
+            <th>vCenter Instance</th>
+            <th>vCenter BIOS UUID</th>
+            <th>vCenter MoRef</th>
+            <th>Connected Port</th>
+            <th>Last Seen</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr class="equipment-row" data-equipment-id="eq-042-esx01" data-site-id="site-042">
+            <td class="col-equipment-id">eq-042-esx01</td>
+            <td class="col-hostname">esx01.site042.example.internal</td>
+            <td class="col-equipment-type">Server</td>
+            <td class="col-vendor">Dell</td>
+            <td class="col-model">PowerEdge R750</td>
+            <td class="col-primary-ip">10.42.1.20</td>
+            <td class="col-mac-address">00:50:56:60:42:01</td>
+            <td class="col-vcenter-instance" data-vcenter-instance=""></td>
+            <td class="col-vcenter-uuid" data-vcenter-uuid=""></td>
+            <td class="col-vcenter-moref" data-vcenter-moref=""></td>
+            <td class="col-connected-port" data-port-id="port-042-sw01-1">port-042-sw01-1</td>
+            <td class="col-last-seen" data-last-seen="2026-11-11T07:55:00Z">2026-11-11T07:55:00Z</td>
+          </tr>
+          <tr class="equipment-row" data-equipment-id="eq-042-vm-win01" data-site-id="site-042">
+            <td class="col-equipment-id">eq-042-vm-win01</td>
+            <td class="col-hostname">win-dc01.site042.example.internal</td>
+            <td class="col-equipment-type">VM</td>
+            <td class="col-vendor">VMware</td>
+            <td class="col-model">Virtual Machine</td>
+            <td class="col-primary-ip">10.42.10.21</td>
+            <td class="col-mac-address">00:50:56:9a:42:11</td>
+            <td class="col-vcenter-instance" data-vcenter-instance="vcenter-prod-01.example.internal">vcenter-prod-01.example.internal</td>
+            <td class="col-vcenter-uuid" data-vcenter-uuid="421a0042-0001-4000-8000-0050569a4211">421a0042-0001-4000-8000-0050569a4211</td>
+            <td class="col-vcenter-moref" data-vcenter-moref="vm-10421">vm-10421</td>
+            <td class="col-connected-port" data-port-id="port-042-sw01-1">port-042-sw01-1</td>
+            <td class="col-last-seen" data-last-seen="2026-11-11T07:58:00Z">2026-11-11T07:58:00Z</td>
+          </tr>
+          <tr class="equipment-row" data-equipment-id="eq-042-vm-win02" data-site-id="site-042">
+            <td class="col-equipment-id">eq-042-vm-win02</td>
+            <td class="col-hostname">win-print02.site042.example.internal</td>
+            <td class="col-equipment-type">VM</td>
+            <td class="col-vendor">VMware</td>
+            <td class="col-model">Virtual Machine</td>
+            <td class="col-primary-ip">10.42.10.22</td>
+            <td class="col-mac-address">00:50:56:9a:42:12</td>
+            <td class="col-vcenter-instance" data-vcenter-instance="vcenter-prod-01.example.internal">vcenter-prod-01.example.internal</td>
+            <td class="col-vcenter-uuid" data-vcenter-uuid="421a0042-0002-4000-8000-0050569a4212">421a0042-0002-4000-8000-0050569a4212</td>
+            <td class="col-vcenter-moref" data-vcenter-moref="vm-10422">vm-10422</td>
+            <td class="col-connected-port" data-port-id="port-042-sw01-1">port-042-sw01-1</td>
+            <td class="col-last-seen" data-last-seen="2026-07-10T04:15:00Z">2026-07-10T04:15:00Z</td>
+          </tr>
+          <tr class="equipment-row" data-equipment-id="eq-042-srv-legacy01" data-site-id="site-042">
+            <td class="col-equipment-id">eq-042-srv-legacy01</td>
+            <td class="col-hostname">srv-legacy01.site042.example.internal</td>
+            <td class="col-equipment-type">Server</td>
+            <td class="col-vendor">HP</td>
+            <td class="col-model">ProLiant DL380 Gen9</td>
+            <td class="col-primary-ip">10.42.10.99</td>
+            <td class="col-mac-address">00:1b:21:42:10:99</td>
+            <td class="col-vcenter-instance" data-vcenter-instance=""></td>
+            <td class="col-vcenter-uuid" data-vcenter-uuid=""></td>
+            <td class="col-vcenter-moref" data-vcenter-moref=""></td>
+            <td class="col-connected-port" data-port-id="port-042-sw01-4">port-042-sw01-4</td>
+            <td class="col-last-seen" data-last-seen="2026-06-15T18:00:00Z">2026-06-15T18:00:00Z</td>
+          </tr>
+          <tr class="equipment-row" data-equipment-id="eq-042-san01" data-site-id="site-042">
+            <td class="col-equipment-id">eq-042-san01</td>
+            <td class="col-hostname">san01.site042.example.internal</td>
+            <td class="col-equipment-type">SAN</td>
+            <td class="col-vendor">NetApp</td>
+            <td class="col-model">AFF A250</td>
+            <td class="col-primary-ip">10.42.20.15</td>
+            <td class="col-mac-address">00:a0:98:42:20:01</td>
+            <td class="col-vcenter-instance" data-vcenter-instance=""></td>
+            <td class="col-vcenter-uuid" data-vcenter-uuid=""></td>
+            <td class="col-vcenter-moref" data-vcenter-moref=""></td>
+            <td class="col-connected-port" data-port-id="port-042-sw01-2">port-042-sw01-2</td>
+            <td class="col-last-seen" data-last-seen="2026-11-11T07:50:00Z">2026-11-11T07:50:00Z</td>
+          </tr>
+          <tr class="equipment-row" data-equipment-id="eq-042-nas-sec01" data-site-id="site-042">
+            <td class="col-equipment-id">eq-042-nas-sec01</td>
+            <td class="col-hostname">nas-sec01.site042.example.internal</td>
+            <td class="col-equipment-type">NAS</td>
+            <td class="col-vendor">Synology</td>
+            <td class="col-model">RS1221+</td>
+            <td class="col-primary-ip">10.42.20.55</td>
+            <td class="col-mac-address">00:11:32:42:20:55</td>
+            <td class="col-vcenter-instance" data-vcenter-instance=""></td>
+            <td class="col-vcenter-uuid" data-vcenter-uuid=""></td>
+            <td class="col-vcenter-moref" data-vcenter-moref=""></td>
+            <td class="col-connected-port" data-port-id="port-042-sw01-5">port-042-sw01-5</td>
+            <td class="col-last-seen" data-last-seen="2026-09-20T10:00:00Z">2026-09-20T10:00:00Z</td>
+          </tr>
+          <tr class="equipment-row" data-equipment-id="eq-042-ups01" data-site-id="site-042">
+            <td class="col-equipment-id">eq-042-ups01</td>
+            <td class="col-hostname">ups01.site042.example.internal</td>
+            <td class="col-equipment-type">UPS</td>
+            <td class="col-vendor">APC</td>
+            <td class="col-model">Smart-UPS SRT 5000VA RM</td>
+            <td class="col-primary-ip">10.42.30.10</td>
+            <td class="col-mac-address">00:c0:b7:42:30:01</td>
+            <td class="col-vcenter-instance" data-vcenter-instance=""></td>
+            <td class="col-vcenter-uuid" data-vcenter-uuid=""></td>
+            <td class="col-vcenter-moref" data-vcenter-moref=""></td>
+            <td class="col-connected-port" data-port-id="port-042-sw01-3">port-042-sw01-3</td>
+            <td class="col-last-seen" data-last-seen="2026-11-11T07:59:00Z">2026-11-11T07:59:00Z</td>
+          </tr>
+          <tr class="equipment-row" data-equipment-id="eq-042-untracked01" data-site-id="site-042">
+            <td class="col-equipment-id">eq-042-untracked01</td>
+            <td class="col-hostname">spare-appliance-closetb</td>
+            <td class="col-equipment-type">Server</td>
+            <td class="col-vendor">Dell</td>
+            <td class="col-model">PowerEdge R640</td>
+            <td class="col-primary-ip"></td>
+            <td class="col-mac-address"></td>
+            <td class="col-vcenter-instance" data-vcenter-instance=""></td>
+            <td class="col-vcenter-uuid" data-vcenter-uuid=""></td>
+            <td class="col-vcenter-moref" data-vcenter-moref=""></td>
+            <td class="col-connected-port" data-port-id=""></td>
+            <td class="col-last-seen" data-last-seen=""></td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+  </main>
+</body>
+</html>
