@@ -1,4 +1,4 @@
-"""Phase 2 dry-run remediation, quarantine graduation, signed approval manifest, and gated executor package."""
+"""Phase 2/4 dry-run remediation, quarantine graduation, signed approval manifest, gated executor, and Extreme switch port reclamation package."""
 
 from sot_validator.remediation.executor import (
     ManifestVerificationError,
@@ -10,6 +10,18 @@ from sot_validator.remediation.executor import (
     RollbackPlan,
     SqlRemediationScriptGenerator,
     SqlRemediationScripts,
+)
+from sot_validator.remediation.port_reclamation import (
+    DEFAULT_BLOCKED_LLDP_CAPABILITIES,
+    DEFAULT_CRITICAL_INFRASTRUCTURE_KEYWORDS,
+    BlockedPortRecord,
+    ExtremeCliDialect,
+    ExtremePortReclamationPlanner,
+    LldpGuardDecision,
+    LldpNeighborRecord,
+    LldpUplinkGuard,
+    PortReclamationCandidate,
+    PortReclamationPlan,
 )
 from sot_validator.remediation.quarantine import (
     ApprovalStatus,
@@ -31,9 +43,19 @@ from sot_validator.remediation.sink import (
 
 __all__ = [
     "ApprovalStatus",
+    "BlockedPortRecord",
+    "DEFAULT_BLOCKED_LLDP_CAPABILITIES",
+    "DEFAULT_CRITICAL_INFRASTRUCTURE_KEYWORDS",
     "DryRunActionPlan",
     "DryRunActionPlanGenerator",
+    "ExtremeCliDialect",
+    "ExtremePortReclamationPlanner",
+    "LldpGuardDecision",
+    "LldpNeighborRecord",
+    "LldpUplinkGuard",
     "ManifestVerificationError",
+    "PortReclamationCandidate",
+    "PortReclamationPlan",
     "ProposedRemediationAction",
     "QuarantineEngine",
     "QuarantineGraduationStatus",
