@@ -625,6 +625,10 @@ def generate_all_reports(
     sites: Optional[Sequence[Site] | Mapping[str, Site]] = None,
     action_plan: Optional[DryRunActionPlan] = None,
     generated_at: Optional[datetime | str] = None,
+    include_html_dashboard: bool = False,
+    approval_manifest: Optional[Any] = None,
+    reconciliation_report: Optional[Any] = None,
+    streaks: Optional[Any] = None,
 ) -> dict[str, Path]:
     """Write JSON, CSV, Markdown, and Phase 2 dry-run remediation plan files to `output_dir`."""
     out_dir = Path(output_dir)
@@ -668,12 +672,33 @@ def generate_all_reports(
     )
     plan_generator.write_plan(resolved_plan, plan_path)
 
-    return {
+    paths: dict[str, Path] = {
         "json": json_path,
         "csv": csv_path,
         "markdown": md_path,
         "remediation_plan": plan_path,
     }
+
+    if include_html_dashboard:
+        from sot_validator.reporting.dashboard import (
+            DEFAULT_DASHBOARD_FILENAME,
+            generate_html_dashboard,
+        )
+
+        html_path = out_dir / DEFAULT_DASHBOARD_FILENAME
+        generate_html_dashboard(
+            results,
+            sites=sites,
+            action_plan=resolved_plan,
+            approval_manifest=approval_manifest,
+            streaks=streaks,
+            reconciliation_report=reconciliation_report,
+            output_path=html_path,
+            generated_at=report_dt,
+        )
+        paths["html_dashboard"] = html_path
+
+    return paths
 
 
 __all__ = [
