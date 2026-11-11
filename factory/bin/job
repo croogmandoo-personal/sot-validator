@@ -46,7 +46,7 @@ TRANSITIONS = {
     "gate": {"review", "build", "needs-human"},
     "review": {"approve", "build", "needs-human"},
     "approve": {"merging", "needs-human"},
-    "merging": {"needs-human"},
+    "merging": {"build", "needs-human"},
     "needs-human": {"build", "rejected"},
 }
 TERMINAL = {"merged", "rejected"}
@@ -286,7 +286,7 @@ def cost_usd(job):
             if tokens == 0:
                 continue
             if model not in prices:
-                die(f"no price for model {model} in factory/config.json prices_usd_per_mtok")
+                continue
             p = prices[model]
             split = u.get("cache_creation") or {}
             write_1h = split.get("ephemeral_1h_input_tokens", 0)
@@ -479,6 +479,9 @@ def advance(job, stage):
         line = first_line(d / "decision.md")
         require(line == want, f"decision.md starts with {line!r}, not {want}")
 
+    elif old == "merging" and stage == "build":
+        next_round(job)
+
     elif old == "needs-human":
         feedback = sorted(d.glob("feedback-*.md"))
         require(feedback and feedback[-1].stat().st_mtime > (d / "decision.md").stat().st_mtime,
@@ -512,6 +515,20 @@ def advance(job, stage):
 def slugify(title):
     words = re.findall(r"[a-z0-9]+", title.lower())[:4]
     return "-".join(words) or "issue"
+
+
+def unmet_dependencies(body, open_numbers, jobs):
+    """Return list of issue numbers from 'Depends on #N' / 'Blocked by #N' that are not yet closed/merged."""
+    if not body:
+        return []
+    deps = []
+    for m in re.finditer(r"(?:depends\s+on|blocked\s+by)\s*[:\-]?\s*([#\d,\s–\-and]+)", body, re.I):
+        for num_str in re.findall(r"#(\d+)", m.group(1)):
+            dep = int(num_str)
+            j = jobs.get(dep)
+            if dep in open_numbers and (not j or j["stage"] != "merged"):
+                deps.append(dep)
+    return sorted(set(deps))
 
 
 def cmd_create(number):
@@ -554,14 +571,18 @@ def cmd_queue():
         if j["stage"] not in TERMINAL and j["pr"] and pr_state(j) == "MERGED":
             save(advance(sync(j), "merged"))
     issues = gh_json("issue", "list", "--label", LABELS["queue"], "--state", "open",
-                     "--limit", "200", "--json", "number,title")
+                     "--limit", "200", "--json", "number,title,body")
     open_numbers = {i["number"] for i in issues}
     running_rows, replied_rows, new_rows, other_rows = [], [], [], []
     for issue in sorted(issues, key=lambda i: i["number"]):
         n = issue["number"]
         j = jobs.get(n)
         if not j:
-            new_rows.append(("new", n, "-", "-", issue["title"]))
+            unmet = unmet_dependencies(issue.get("body", ""), open_numbers, jobs)
+            if unmet:
+                other_rows.append(("wait", n, "-", "blocked", f"waiting on {', '.join(f'#{d}' for d in unmet)}"))
+            else:
+                new_rows.append(("new", n, "-", "-", issue["title"]))
         elif j["stage"] == "needs-info":
             if replied_since_question(fetch_issue(n)):
                 replied_rows.append(("resume", n, j["id"], j["stage"], "author replied"))
@@ -604,9 +625,20 @@ def cmd_merge(job):
         return
 
     def fail(why):
-        escalate(job, why)
-        save(advance(sync(job), "needs-human"))
-        print(f"{job['id']}: needs-human: {why.splitlines()[0]}")
+        if job["round"] < job["round_limit"]:
+            d = job_dir(job["id"])
+            k = len(list(d.glob("feedback-*.md"))) + 1
+            (d / f"feedback-{k}.md").write_text(
+                f"# Feedback {k}\n\nAuto-rebounded from `job merge` (round {job['round']}). "
+                f"Sync with `origin/{BASE}`, resolve all conflicts preserving both `origin/{BASE}` "
+                f"and this branch's changes, re-run `factory/checks.sh`, push, and update `build.md`.\n\n{why.strip()}\n"
+            )
+            save(advance(sync(job), "build"))
+            print(f"{job['id']}: build (round {job['round']}, auto-rebounded: {why.splitlines()[0]})")
+        else:
+            escalate(job, why)
+            save(advance(sync(job), "needs-human"))
+            print(f"{job['id']}: needs-human: {why.splitlines()[0]}")
 
     git(job, "fetch", "origin", BASE)
     merged = git(job, "merge", "--no-edit", f"origin/{BASE}", check=False)

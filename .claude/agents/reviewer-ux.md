@@ -30,9 +30,9 @@ is in the main checkout; your one file goes there.
 
 ## Look at it
 
-If the change shows up on a page, use it like an SMB office manager or bookkeeper
-checking subcontractor insurance compliance before dispatching a crew. Start the
-dev server from AGENTS.md in the worktree, in the background, on your port.
+If the change shows up on a page, walk the flow as the target user described in
+`AGENTS.md` (or `SPEC.md`). Start the dev server from `AGENTS.md` in the worktree,
+in the background, on your port.
 
 If the `agent-browser` CLI is installed (`command -v agent-browser`), use it with
 `--session <job-id>-ux` and close with `agent-browser --session <job-id>-ux close`.

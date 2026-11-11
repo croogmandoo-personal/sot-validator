@@ -82,12 +82,16 @@ command you ran and its result, or what the page showed.
   your port (`lsof -tiTCP:<port> -sTCP:LISTEN`); other jobs run dev servers too, so
   never kill by process name.
 
-## Commit, push, PR
+## Commit, sync base branch, push, PR
 
 - Commit on the job branch with short one-line messages in the style of
   `git log --oneline`. One commit per distinct piece of work.
 - Stage explicit paths, never `git add -A`. Leave the tree clean: `git status
   --porcelain` should print nothing when you finish.
+- Before your final check and push, sync with `<base>` (`git fetch origin && git merge --no-edit <base>`).
+  If there are merge conflicts with recently merged sibling PRs, resolve them cleanly
+  preserving both `<base>` features and your branch's changes, then re-run
+  `bash <main checkout>/factory/checks.sh` to verify the merged tree passes.
 - Push with `git push -u origin <branch>`. Push only the job branch, never
   anything else.
 - If the branch has no PR yet (`gh pr view <branch>` fails), open it as a draft:
