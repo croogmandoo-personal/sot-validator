@@ -57,6 +57,8 @@ class SignalType(str, Enum):
     SNMP_API_REACHABILITY = "SNMP_API_REACHABILITY"
     LAST_SEEN_TIMESTAMP = "LAST_SEEN_TIMESTAMP"
     VM_POWER_STATE = "VM_POWER_STATE"
+    AD_COMPUTER_ACCOUNT = "AD_COMPUTER_ACCOUNT"
+    DNS_DHCP_LEASE = "DNS_DHCP_LEASE"
 
 
 class SignalStatus(str, Enum):
@@ -559,6 +561,7 @@ class ValidationSignal:
     age_seconds: Optional[float] = None
     details: Optional[str] = None
     source: Optional[str] = None
+    metadata: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if not isinstance(self.signal_type, SignalType):
@@ -582,6 +585,12 @@ class ValidationSignal:
             self.age_seconds = float(self.age_seconds)
             if not (self.age_seconds >= 0.0):
                 raise ValueError("age_seconds must be non-negative")
+        if self.metadata is None:
+            self.metadata = {}
+        elif isinstance(self.metadata, Mapping):
+            self.metadata = dict(self.metadata)
+        else:
+            raise ValueError("metadata must be a mapping or None")
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -591,6 +600,7 @@ class ValidationSignal:
             "age_seconds": self.age_seconds,
             "details": self.details,
             "source": self.source,
+            "metadata": dict(self.metadata),
         }
 
     @classmethod
@@ -604,6 +614,7 @@ class ValidationSignal:
             age_seconds=data.get("age_seconds"),
             details=data.get("details"),
             source=data.get("source"),
+            metadata=data.get("metadata") or {},
         )
 
     def to_json(self, *, indent: Optional[int] = None) -> str:
@@ -612,6 +623,9 @@ class ValidationSignal:
     @classmethod
     def from_json(cls, raw: str) -> ValidationSignal:
         return cls.from_dict(json.loads(raw))
+
+
+Signal = ValidationSignal
 
 
 @dataclass
@@ -702,6 +716,7 @@ __all__ = [
     "IPAddress",
     "NetworkDevice",
     "Port",
+    "Signal",
     "SignalStatus",
     "SignalType",
     "Site",
