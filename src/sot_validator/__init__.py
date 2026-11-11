@@ -18,9 +18,13 @@ from sot_validator.models import (
 )
 from sot_validator.signals import (
     ArpSignalEvaluator,
+    IcmpProbeCollector,
     LastSeenSignalEvaluator,
+    ManagementProbeCollector,
     PortStateSignalEvaluator,
+    ScopeViolationError,
     SignalCollector,
+    SubnetScopeGuard,
 )
 
 __all__ = [
@@ -29,15 +33,19 @@ __all__ = [
     "Equipment",
     "EquipmentCategory",
     "IPAddress",
+    "IcmpProbeCollector",
     "LastSeenSignalEvaluator",
+    "ManagementProbeCollector",
     "NetworkDevice",
     "Port",
     "PortStateSignalEvaluator",
+    "ScopeViolationError",
     "SignalCollector",
     "SignalStatus",
     "SignalType",
     "Site",
     "Subnet",
+    "SubnetScopeGuard",
     "VLAN",
     "ValidationClassification",
     "ValidationResult",
