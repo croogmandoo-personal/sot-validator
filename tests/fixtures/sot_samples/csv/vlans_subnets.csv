@@ -1,0 +1,5 @@
+subnet_id,site_id,vlan_id,vlan_name,cidr,gateway_ip,description
+sub-042-001,site-042,1,MGMT-NET,10.42.1.0/24,10.42.1.1,Network & Infrastructure Management
+sub-042-010,site-042,10,SERVER-PROD,10.42.10.0/24,10.42.10.1,Production Servers & Virtual Machines
+sub-042-020,site-042,20,STORAGE-SAN,10.42.20.0/24,10.42.20.1,Storage Area Network & Backup
+sub-042-030,site-042,30,FACILITY-UPS,10.42.30.0/24,10.42.30.1,Facility Power & Environmental Monitoring

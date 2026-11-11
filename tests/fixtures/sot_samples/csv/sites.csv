@@ -1,0 +1,2 @@
+site_id,name,site_prefix,address,contact_name,contact_email,contact_phone,rooms
+site-042,SF Regional Distribution Center 42,10.42.0.0/16,"742 Industrial Pkwy, South San Francisco, CA 94080",Jordan Rivera,netops-site042@example.internal,+1-650-555-0142,MDF-101;IDF-201;UPS-Closet-B

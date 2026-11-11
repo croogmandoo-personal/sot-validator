@@ -1,0 +1,3 @@
+device_id,site_id,hostname,vendor,model,role,mgmt_ip,mac_address,room,os_version,serial_number,last_seen
+dev-042-sw01,site-042,sw01.site042.example.internal,Extreme Networks,ExtremeSwitching X465-48W,core-switch,10.42.1.10,00:04:96:9a:bc:01,MDF-101,EXOS 31.7.1.4,SIM-EX465-04201,2026-11-11T08:00:00Z
+dev-042-sw02,site-042,sw02.site042.example.internal,Extreme Networks,ExtremeSwitching X440-G2-24p,access-switch,10.42.1.11,00:04:96:9a:bc:02,IDF-201,EXOS 31.7.1.4,SIM-EX440-04202,2026-08-01T12:00:00Z
