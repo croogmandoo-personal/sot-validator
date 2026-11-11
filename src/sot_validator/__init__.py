@@ -1,5 +1,9 @@
 """sot-validator: Read-only inventory validation system for legacy Network Source of Truth."""
 
+from sot_validator.classifier import (
+    ClassificationEngine,
+    ClassificationPolicy,
+)
 from sot_validator.models import (
     ArpEntry,
     Equipment,
@@ -37,6 +41,8 @@ from sot_validator.signals import (
 __all__ = [
     "ArpEntry",
     "ArpSignalEvaluator",
+    "ClassificationEngine",
+    "ClassificationPolicy",
     "Equipment",
     "EquipmentCategory",
     "GuestToolsStatus",
