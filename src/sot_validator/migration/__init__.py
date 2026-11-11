@@ -10,12 +10,32 @@ from sot_validator.migration.exporter import (
     ModernSoTExporter,
     slugify,
 )
+from sot_validator.migration.parity import (
+    ALL_CUTOVER_RECOMMENDATIONS,
+    ALL_PARITY_DISCREPANCY_TYPES,
+    PARITY_ENTITY_COLLECTIONS,
+    CutoverRecommendation,
+    DualRunParityChecker,
+    MigrationParityReport,
+    ParityDiscrepancy,
+    ParityDiscrepancyType,
+    SiteMigrationReadinessScorecard,
+)
 
 __all__ = [
+    "ALL_CUTOVER_RECOMMENDATIONS",
+    "ALL_PARITY_DISCREPANCY_TYPES",
     "CSV_COLUMNS_BY_ENTITY",
+    "CutoverRecommendation",
+    "DualRunParityChecker",
     "ENTITY_COLLECTION_KEYS",
     "GoldenInventoryFilter",
+    "MigrationParityReport",
     "ModernSoTExporter",
+    "PARITY_ENTITY_COLLECTIONS",
+    "ParityDiscrepancy",
+    "ParityDiscrepancyType",
     "SUPPORTED_TARGET_PLATFORMS",
+    "SiteMigrationReadinessScorecard",
     "slugify",
 ]
