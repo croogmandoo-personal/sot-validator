@@ -31,17 +31,18 @@ Inventory Validation System for Legacy Network Source of Truth.
 - **Multi-Site Campaign Orchestrator & Alerting (`CampaignOrchestrator`, `AlertSink`)**: Run rolling validation waves across site cohorts with WAN/collector outage circuit breakers and structured JSON/Slack/Teams webhook alerts.
 - **Interactive HTML Operations Dashboard (`HtmlDashboardGenerator`)**: Produce a self-contained, zero-CDN-dependency HTML5 dashboard (`validation_dashboard.html`) with KPI cards, `/24` subnet utilization bars, client-side search/filter controls, quarantine queues, and untracked asset tables.
 
-### Phase 4 Objectives (Staged Extreme Networks Switch Port & PoE Reclamation)
-- **LLDP/CDP Uplink & Infrastructure Guard (`LldpUplinkGuard`)**: Protect inter-switch uplinks, trunks, routers, wireless APs, APC UPS management interfaces, and VMware ESXi/vCenter host ports from automated port shutdown.
-- **Staged ExtremeXOS & VOSS Port Reclamation Planner (`ExtremePortReclamationPlanner`)**: Generate dry-run port shutdown and PoE disable plans (`port_reclamation_plan.json`, `reclaim_ports_exos.xsf`, `reclaim_ports_voss.cli`) with 1-command rollback scripts and estimated PoE wattage savings.
+### Phase 4 Objectives (Live Pilot Connectors, AD/DNS/DHCP Signals & Extreme Switch Port Reclamation)
+- **Live Read-Only Pilot Connectors & Pre-Flight Cutover (`connectors/`, `AuthenticatedScraperSession`, `VSphereRestConnector`, `SnmpWalkConnector`, `PilotCutoverValidator`)**: Verify `/24` subnet scoping, read-only guardrails, and endpoint readiness before rolling out live site waves.
+- **Active Directory & `/24` DNS/DHCP Lease Correlation (`ActiveDirectoryCollector`, `DnsDhcpLeaseCollector`)**: Correlate Windows computer account activity (`lastLogonTimestamp`, `pwdLastSet`) and forward/reverse DNS + `/24` DHCP leases (`--ad-json`, `--dns-json`, `--dhcp-json`).
+- **LLDP/CDP Uplink Guard & Staged Extreme Switch Port / PoE Reclamation (`ExtremePortReclamationPlanner`, `LldpUplinkGuard`)**: Protect inter-switch uplinks, trunks, routers, wireless APs, APC UPS management interfaces, and VMware ESXi/vCenter host ports while generating dry-run ExtremeXOS/VOSS disable and 1-command rollback scripts (`port_reclamation_plan.json`, `port_reclamation_disable.cli`, `port_reclamation_rollback.cli`).
 
 ### Phase 5 Objectives (Modern SoT Migration & Dual-Run Parity Validation)
-- **Golden Inventory Exporter (`ModernSoTExporter`, `GoldenInventoryFilter`)**: Filter out stale/quarantined assets, merge approved Shadow IT discoveries, and export normalized NetBox and Nautobot JSON and per-entity CSV bundles (`sites.csv`, `vlans.csv`, `prefixes.csv`, `devices.csv`, `interfaces.csv`, `ip_addresses.csv`, `virtual_machines.csv`).
-- **Dual-Run Parity & Site Cutover Scorecards (`ModernSoTParityValidator`, `SiteMigrationReadinessScorecard`)**: Detect `MISSING_IN_MODERN_SOT`, `STALE_LEAKED_TO_MODERN_SOT`, and `ATTRIBUTE_MISMATCH` discrepancies and compute `0.0-100.0` per-site readiness scores (`READY_FOR_CUTOVER`, `NEEDS_REMEDIATION`, `BLOCKED`).
+- **Golden Inventory Exporter (`migration/`, `ModernSoTExporter`, `GoldenInventoryFilter`)**: Filter out stale/quarantined assets, merge approved Shadow IT discoveries, and export normalized NetBox and Nautobot JSON (`modern_sot_bundle.json`) and per-entity CSV bundles (`csv_bundle/sites.csv`, `vlans.csv`, `prefixes.csv`, `devices.csv`, `interfaces.csv`, `ip_addresses.csv`, `virtual_machines.csv`).
+- **Dual-Run Parity & Site Cutover Scorecards (`DualRunParityChecker`, `SiteMigrationReadinessScorecard`)**: Detect `MISSING_IN_MODERN_SOT`, `STALE_LEAKED_TO_MODERN_SOT`, and `ATTRIBUTE_MISMATCH` discrepancies and compute `0.0-100.0` per-site readiness scores (`READY_FOR_CUTOVER`, `NEEDS_REMEDIATION`, `BLOCKED`).
 
 ### Phase 6 Objectives (APC UPS Fleet Health & ITSM Change-Ticket Governance)
-- **APC UPS Battery & Environmental Health Evaluator (`ApcUpsHealthEvaluator`)**: Parse PowerNet-MIB OIDs (`1.3.6.1.4.1.318.*`) for battery replacement indicators (`BATTERY_REPLACEMENT_NEEDED`), low runtime, high temperature, high load, and utility line failure causes across all sites.
-- **ITSM Change-Ticket & Approval Gate (`ItsmTicketPayloadBuilder`, `ItsmGateVerifier`)**: Generate ServiceNow, Jira, and generic webhook change tickets for quarantine, port reclamation, Shadow IT onboarding, and UPS hardware incidents, and enforce SHA-256 digest and ticket approval verification before remediation execution.
+- **APC UPS Battery & Environmental Health Evaluator (`ApcUpsHealthEvaluator`, `UpsFleetHealthReport`)**: Parse PowerNet-MIB OIDs (`1.3.6.1.4.1.318.*`) for battery replacement indicators (`BATTERY_REPLACEMENT_NEEDED`), low runtime, high temperature, high load, and utility line failure causes across all sites.
+- **ITSM Change-Ticket & Approval Gate (`itsm/`, `ItsmTicketPayloadBuilder`, `JsonFileItsmSink`, `ItsmGateVerifier`)**: Generate ServiceNow, Jira, and generic webhook change tickets for quarantine, port reclamation, Shadow IT onboarding, and UPS hardware incidents, and enforce SHA-256 digest and ticket approval verification (`--itsm-ticket-id`, `--itsm-tickets-file`) before remediation execution.
 
 ## Architecture
 
@@ -85,9 +86,14 @@ PYTHONPATH=src python3 -m sot_validator run \
   --html-dashboard \
   --output-dir ./output
 
-# Step-by-step workflow
+# Step-by-step workflow (with optional AD, DNS, and /24 DHCP signal feeds)
 PYTHONPATH=src python3 -m sot_validator extract --fixtures --snapshot-dir ./snapshots
-PYTHONPATH=src python3 -m sot_validator validate --snapshot-dir ./snapshots --output-dir ./output
+PYTHONPATH=src python3 -m sot_validator validate \
+  --snapshot-dir ./snapshots \
+  --ad-json ./ad_computers.json \
+  --dns-json ./dns_records.json \
+  --dhcp-json ./dhcp_leases.json \
+  --output-dir ./output
 PYTHONPATH=src python3 -m sot_validator report \
   --input-dir ./output \
   --snapshot-dir ./snapshots \
@@ -120,9 +126,11 @@ PYTHONPATH=src python3 -m sot_validator remediate \
   --manifest ./output/approval_manifest.json \
   --output-dir ./output
 
-# Execute approved remediation in gated write mode and record rollback journal
+# Execute approved remediation in gated write mode with ITSM change-ticket verification
 PYTHONPATH=src python3 -m sot_validator remediate \
   --execute-approved-plan ./output/approval_manifest.json \
+  --itsm-ticket-id CHG0010001 \
+  --itsm-tickets-file ./output/itsm_tickets.json \
   --confirm-write \
   --output-dir ./output
 ```
@@ -147,12 +155,19 @@ PYTHONPATH=src python3 -m sot_validator campaign \
   --output-dir ./output
 ```
 
-### Phase 4: Staged Extreme Networks Switch Port & PoE Reclamation (`reclaim-ports`)
+### Phase 4: Pre-Flight Cutover & Staged Extreme Switch Port Reclamation (`preflight`, `reclaim-ports`)
 
 ```bash
+# Run pre-flight readiness checks for a pilot site wave
+PYTHONPATH=src python3 -m sot_validator preflight \
+  --fixtures \
+  --num-sites 3 \
+  --output-dir ./output
+
+# Generate staged ExtremeXOS / VOSS port reclamation and rollback scripts
 PYTHONPATH=src python3 -m sot_validator reclaim-ports \
-  --snapshot-dir ./output/snapshots \
-  --db-path ./output/history.db \
+  --csv-dir tests/fixtures/sot_samples/csv \
+  --snmp-fixture tests/fixtures/sot_samples/snmp/extreme_and_apc_walks.json \
   --dialect exos \
   --output-dir ./output
 ```
@@ -169,9 +184,8 @@ PYTHONPATH=src python3 -m sot_validator export-modern-sot \
 
 # Evaluate dual-run parity and site migration readiness scorecards
 PYTHONPATH=src python3 -m sot_validator parity-check \
-  --snapshot-dir ./output/snapshots \
-  --golden-bundle ./output/netbox_golden_bundle.json \
-  --modern-bundle ./output/netbox_golden_bundle.json \
+  --golden-bundle ./output/modern_sot_bundle.json \
+  --modern-bundle ./output/modern_sot_bundle.json \
   --output-dir ./output
 ```
 
@@ -180,15 +194,15 @@ PYTHONPATH=src python3 -m sot_validator parity-check \
 ```bash
 # Evaluate APC UPS PowerNet-MIB health telemetry across sites
 PYTHONPATH=src python3 -m sot_validator ups-health \
-  --snapshot-dir ./output/snapshots \
+  --csv-dir tests/fixtures/sot_samples/csv \
   --snmp-fixture tests/fixtures/sot_samples/snmp/extreme_and_apc_walks.json \
   --output-dir ./output
 
-# Generate, approve, and verify an ITSM change ticket
+# Generate and approve an ITSM change ticket
 PYTHONPATH=src python3 -m sot_validator itsm \
-  --manifest-file ./output/approval_manifest.json \
+  --manifest ./output/approval_manifest.json \
+  --tickets-file ./output/itsm_tickets.json \
   --provider servicenow \
-  --approval-status APPROVED \
   --output-dir ./output
 ```
 

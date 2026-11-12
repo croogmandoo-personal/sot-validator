@@ -333,6 +333,12 @@ def generate_html_dashboard(
         PortReclamationPlan | Mapping[str, Any]
     ] = None,
     port_plan: Optional[PortReclamationPlan | Mapping[str, Any]] = None,
+    migration_parity_report: Optional[
+        ParityValidationReport
+        | SiteMigrationReadinessScorecard
+        | Sequence[SiteMigrationReadinessScorecard | Mapping[str, Any]]
+        | Mapping[str, Any]
+    ] = None,
     parity_report: Optional[
         ParityValidationReport
         | SiteMigrationReadinessScorecard
@@ -402,9 +408,14 @@ def generate_html_dashboard(
         if port_reclamation_plan is not None
         else port_plan
     )
-    resolved_parity = _coerce_parity_report(
-        parity_report if parity_report is not None else migration_scorecards
+    raw_parity_arg = (
+        migration_parity_report
+        if migration_parity_report is not None
+        else (
+            parity_report if parity_report is not None else migration_scorecards
+        )
     )
+    resolved_parity = _coerce_parity_report(raw_parity_arg)
     resolved_ups = _coerce_ups_health_report(
         ups_health_report if ups_health_report is not None else ups_report
     )
@@ -814,6 +825,7 @@ def generate_html_dashboard(
     # 7. Build Phase 5 Modern SoT Dual-Run Parity & Migration Readiness Scorecards Section
     parity_meta_html = ""
     parity_scorecard_rows_html: list[str] = []
+    parity_discrepancy_rows_html: list[str] = []
     if resolved_parity is not None:
         overall_rec_badge = _cutover_badge_class(
             resolved_parity.overall_recommendation.value
@@ -824,7 +836,8 @@ def generate_html_dashboard(
             f"<span><strong>Ready for Cutover:</strong> <code>{resolved_parity.ready_for_cutover_count}</code></span> "
             f"<span><strong>Needs Remediation:</strong> <code>{resolved_parity.needs_remediation_count}</code></span> "
             f"<span><strong>Blocked:</strong> <code>{resolved_parity.blocked_count}</code></span> "
-            f"<span><strong>Overall Readiness Score:</strong> <code>{resolved_parity.overall_readiness_score:.2f}%</code></span> "
+            f"<span><strong>Overall Parity:</strong> <code>{resolved_parity.overall_parity_percentage:.2f}%</code></span> "
+            f"<span><strong>Average Readiness Score:</strong> <code>{resolved_parity.average_readiness_score:.2f}%</code></span> "
             f'<span class="badge {overall_rec_badge}">{_esc(resolved_parity.overall_recommendation.value)}</span>'
             "</div>"
         )
@@ -849,13 +862,34 @@ def generate_html_dashboard(
                     f"<td>{_esc(blockers_str)}</td>"
                     "</tr>"
                 )
+                for pdisc in sc.discrepancies:
+                    parity_discrepancy_rows_html.append(
+                        "<tr>"
+                        f"<td><code>{_esc(pdisc.discrepancy_id)}</code></td>"
+                        f"<td><code>{_esc(pdisc.discrepancy_type.value)}</code></td>"
+                        f"<td><code>{_esc(pdisc.site_id)}</code></td>"
+                        f"<td><code>{_esc(pdisc.entity_type)}</code></td>"
+                        f"<td><code>{_esc(pdisc.item_identifier)}</code></td>"
+                        f"<td><code>{_esc(pdisc.attribute_name or '-')}</code></td>"
+                        f"<td><code>{_esc(pdisc.expected_value if pdisc.expected_value is not None else '-')}</code></td>"
+                        f"<td><code>{_esc(pdisc.actual_value if pdisc.actual_value is not None else '-')}</code></td>"
+                        f"<td>{_esc(pdisc.details or '-')}</td>"
+                        "</tr>"
+                    )
         else:
             parity_scorecard_rows_html.append(
                 '<tr><td colspan="9" class="empty-cell">No site migration readiness scorecards available.</td></tr>'
             )
+        if not parity_discrepancy_rows_html:
+            parity_discrepancy_rows_html.append(
+                '<tr><td colspan="9" class="empty-cell">No dual-run parity discrepancies detected.</td></tr>'
+            )
     else:
         parity_scorecard_rows_html.append(
             '<tr><td colspan="9" class="empty-cell">No Phase 5 Modern SoT parity report provided.</td></tr>'
+        )
+        parity_discrepancy_rows_html.append(
+            '<tr><td colspan="9" class="empty-cell">No Phase 5 dual-run parity discrepancies provided.</td></tr>'
         )
 
     # 8. Build Phase 6 APC UPS Fleet Health & Environmental Telemetry Section
@@ -869,7 +903,9 @@ def generate_html_dashboard(
             f"<span><strong>Warning:</strong> <code>{resolved_ups.warning_count}</code></span> "
             f"<span><strong>Critical:</strong> <code>{resolved_ups.critical_count}</code></span> "
             f"<span><strong>Unreachable:</strong> <code>{resolved_ups.unreachable_count}</code></span> "
-            f"<span><strong>Battery Replacement Needed:</strong> <code>{len(resolved_ups.battery_replacement_units)}</code></span>"
+            f"<span><strong>Battery Replacement Needed:</strong> <code>{len(resolved_ups.battery_replacement_units)}</code></span> "
+            f"<span><strong>Low Runtime:</strong> <code>{len(resolved_ups.low_runtime_units)}</code></span> "
+            f"<span><strong>Thermal Alerts:</strong> <code>{len(resolved_ups.thermal_alert_units)}</code></span>"
             "</div>"
         )
         if resolved_ups.records:
@@ -904,16 +940,17 @@ def generate_html_dashboard(
                     f'<td class="num">{_esc(runtime_str)}</td>'
                     f'<td class="num">{_esc(temp_str)}</td>'
                     f'<td class="num">{_esc(load_str)}</td>'
+                    f"<td><code>{_esc(urec.output_status or '-')}</code></td>"
                     f"<td><code>{_esc(adv_str)}</code></td>"
                     "</tr>"
                 )
         else:
             ups_rows_html.append(
-                '<tr><td colspan="12" class="empty-cell">No APC UPS health records evaluated.</td></tr>'
+                '<tr><td colspan="13" class="empty-cell">No APC UPS health records evaluated.</td></tr>'
             )
     else:
         ups_rows_html.append(
-            '<tr><td colspan="12" class="empty-cell">No Phase 6 APC UPS fleet health telemetry report provided.</td></tr>'
+            '<tr><td colspan="13" class="empty-cell">No Phase 6 APC UPS fleet health telemetry report provided.</td></tr>'
         )
 
     # 9. Build Phase 6 ITSM Change-Ticket & Approval Governance Queue Section
@@ -928,6 +965,7 @@ def generate_html_dashboard(
                 f"<td><code>{_esc(tkt.workflow_type.value)}</code></td>"
                 f"<td>{_esc(tkt.title)}</td>"
                 f"<td><code>{_esc(tkt.risk)}</code> / <code>{_esc(tkt.priority)}</code></td>"
+                f"<td><code>{_esc(tkt.cmdb_ci or '-')}</code></td>"
                 f"<td><code>{_esc(sites_str)}</code></td>"
                 f"<td><code>{_esc(tkt.artifact_id or '-')}</code></td>"
                 f"<td><code>{_esc(tkt.artifact_sha256 or '-')}</code></td>"
@@ -937,7 +975,7 @@ def generate_html_dashboard(
             )
     else:
         itsm_rows_html.append(
-            '<tr><td colspan="9" class="empty-cell">No Phase 6 ITSM change tickets or incident payloads queued.</td></tr>'
+            '<tr><td colspan="10" class="empty-cell">No Phase 6 ITSM change tickets or incident payloads queued.</td></tr>'
         )
 
     cls_options_html = "".join(
@@ -1204,15 +1242,15 @@ def generate_html_dashboard(
     </div>
     <div class="kpi-card">
       <div class="kpi-label">Sites Ready for Cutover</div>
-      <div class="kpi-value" data-kpi="sites-ready-for-cutover">{ready_cutover_sites_count}</div>
+      <div class="kpi-value" data-kpi="migration-ready-sites" data-kpi-alias="sites-ready-for-cutover">{ready_cutover_sites_count}</div>
     </div>
     <div class="kpi-card">
       <div class="kpi-label">APC UPS Health Alerts</div>
-      <div class="kpi-value" data-kpi="ups-health-alerts">{ups_alerts_count}</div>
+      <div class="kpi-value" data-kpi="ups-critical-alerts" data-kpi-alias="ups-health-alerts">{ups_alerts_count}</div>
     </div>
     <div class="kpi-card">
       <div class="kpi-label">ITSM Change Tickets</div>
-      <div class="kpi-value" data-kpi="itsm-tickets">{itsm_tickets_count}</div>
+      <div class="kpi-value" data-kpi="itsm-tickets-count" data-kpi-alias="itsm-tickets">{itsm_tickets_count}</div>
     </div>
   </div>
 
@@ -1416,28 +1454,53 @@ def generate_html_dashboard(
     </div>
   </section>
 
-  <section id="modern-sot-parity-section">
-    <h2>6. Phase 5 Modern SoT Dual-Run Parity &amp; Migration Readiness Scorecards</h2>
-    {parity_meta_html}
-    <div class="table-wrap">
-      <table id="parity-scorecards-table">
-        <thead>
-          <tr>
-            <th>Site ID</th>
-            <th>Site Name</th>
-            <th class="num">Readiness Score</th>
-            <th class="num">Parity Match</th>
-            <th>Cutover Recommendation</th>
-            <th class="num">Matched / Expected</th>
-            <th class="num">Parity Discrepancies</th>
-            <th class="num">Unresolved Shadow IT</th>
-            <th>Blocking Reasons</th>
-          </tr>
-        </thead>
-        <tbody>
-          {"".join(parity_scorecard_rows_html)}
-        </tbody>
-      </table>
+  <section id="migration-parity-section">
+    <div id="modern-sot-parity-section">
+      <h2>6. Phase 5 Modern SoT Dual-Run Parity &amp; Migration Readiness Scorecards</h2>
+      {parity_meta_html}
+      <h3>Per-Site Migration Readiness Scorecards</h3>
+      <div class="table-wrap">
+        <table id="parity-scorecards-table">
+          <thead>
+            <tr>
+              <th>Site ID</th>
+              <th>Site Name</th>
+              <th class="num">Readiness Score</th>
+              <th class="num">Parity Match</th>
+              <th>Cutover Recommendation</th>
+              <th class="num">Matched / Expected</th>
+              <th class="num">Parity Discrepancies</th>
+              <th class="num">Unresolved Shadow IT</th>
+              <th>Blocking Reasons</th>
+            </tr>
+          </thead>
+          <tbody>
+            {"".join(parity_scorecard_rows_html)}
+          </tbody>
+        </table>
+      </div>
+
+      <h3>Dual-Run Parity Discrepancies</h3>
+      <div class="table-wrap">
+        <table id="parity-discrepancies-table">
+          <thead>
+            <tr>
+              <th>Discrepancy ID</th>
+              <th>Discrepancy Type</th>
+              <th>Site ID</th>
+              <th>Entity Type</th>
+              <th>Item Identifier</th>
+              <th>Attribute</th>
+              <th>Expected</th>
+              <th>Actual</th>
+              <th>Details</th>
+            </tr>
+          </thead>
+          <tbody>
+            {"".join(parity_discrepancy_rows_html)}
+          </tbody>
+        </table>
+      </div>
     </div>
   </section>
 
@@ -1459,6 +1522,7 @@ def generate_html_dashboard(
             <th class="num">Runtime Remaining</th>
             <th class="num">Temp</th>
             <th class="num">Output Load</th>
+            <th>Output Status</th>
             <th>Active Advisories</th>
           </tr>
         </thead>
@@ -1479,6 +1543,7 @@ def generate_html_dashboard(
             <th>Workflow Type</th>
             <th>Title / Short Description</th>
             <th>Risk / Priority</th>
+            <th>CMDB CI</th>
             <th>Sites</th>
             <th>Artifact ID</th>
             <th>Artifact SHA-256 Digest</th>
@@ -1560,7 +1625,7 @@ class HtmlDashboardGenerator:
 
     DEFAULT_FILENAME = DEFAULT_DASHBOARD_FILENAME
 
-    def generate(
+    def render(
         self,
         results: Sequence[ValidationResult | Mapping[str, Any]],
         *,
@@ -1588,6 +1653,12 @@ class HtmlDashboardGenerator:
             PortReclamationPlan | Mapping[str, Any]
         ] = None,
         port_plan: Optional[PortReclamationPlan | Mapping[str, Any]] = None,
+        migration_parity_report: Optional[
+            ParityValidationReport
+            | SiteMigrationReadinessScorecard
+            | Sequence[SiteMigrationReadinessScorecard | Mapping[str, Any]]
+            | Mapping[str, Any]
+        ] = None,
         parity_report: Optional[
             ParityValidationReport
             | SiteMigrationReadinessScorecard
@@ -1640,6 +1711,7 @@ class HtmlDashboardGenerator:
             subnet_utilization=subnet_utilization,
             port_reclamation_plan=port_reclamation_plan,
             port_plan=port_plan,
+            migration_parity_report=migration_parity_report,
             parity_report=parity_report,
             migration_scorecards=migration_scorecards,
             ups_health_report=ups_health_report,
@@ -1650,6 +1722,8 @@ class HtmlDashboardGenerator:
             generated_at=generated_at,
             title=title,
         )
+
+    generate = render
 
     def write(
         self,
@@ -1680,6 +1754,12 @@ class HtmlDashboardGenerator:
             PortReclamationPlan | Mapping[str, Any]
         ] = None,
         port_plan: Optional[PortReclamationPlan | Mapping[str, Any]] = None,
+        migration_parity_report: Optional[
+            ParityValidationReport
+            | SiteMigrationReadinessScorecard
+            | Sequence[SiteMigrationReadinessScorecard | Mapping[str, Any]]
+            | Mapping[str, Any]
+        ] = None,
         parity_report: Optional[
             ParityValidationReport
             | SiteMigrationReadinessScorecard
@@ -1734,6 +1814,7 @@ class HtmlDashboardGenerator:
             subnet_utilization=subnet_utilization,
             port_reclamation_plan=port_reclamation_plan,
             port_plan=port_plan,
+            migration_parity_report=migration_parity_report,
             parity_report=parity_report,
             migration_scorecards=migration_scorecards,
             ups_health_report=ups_health_report,

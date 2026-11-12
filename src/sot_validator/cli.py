@@ -1,9 +1,9 @@
-"""Unified CLI runner for sot-validator (`extract`, `validate`, `report`, `run`, `history`, `quarantine`, `remediate`, `reconcile`, `campaign`, `reclaim-ports`, `export-modern-sot`, `parity-check`, `ups-health`, `itsm`)."""
+"""Unified CLI runner for sot-validator (`extract`, `validate`, `report`, `run`, `history`, `quarantine`, `remediate`, `reconcile`, `campaign`, `preflight`, `reclaim-ports`, `export-modern-sot`, `parity-check`, `ups-health`, `itsm`)."""
 
 from __future__ import annotations
 
 import argparse
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from datetime import datetime, timezone
 import json
 from pathlib import Path
@@ -21,6 +21,11 @@ from sot_validator.classifier.engine import (
     ClassificationEngine,
     ClassificationPolicy,
 )
+from sot_validator.connectors import (
+    PilotCutoverValidator,
+    SnmpWalkConnector,
+    VSphereRestConnector,
+)
 from sot_validator.extraction import (
     BatchExtractor,
     FixtureSoTClient,
@@ -29,7 +34,7 @@ from sot_validator.extraction import (
     SoTClient,
     SqlExportSoTClient,
 )
-from sot_validator.history import HistoryStore
+from sot_validator.history import HistoryStore, ItemStreakSummary
 from sot_validator.itsm import (
     InMemoryItsmSink,
     ItsmGateVerifier,
@@ -40,14 +45,17 @@ from sot_validator.itsm import (
     ItsmWorkflowType,
     JsonFileItsmSink,
     TicketApprovalStatus,
-    WebhookItsmSink,
 )
 from sot_validator.migration import (
+    DualRunParityChecker,
     GoldenInventoryFilter,
     ModernSoTExporter,
-    ModernSoTParityValidator,
 )
-from sot_validator.models import Site, ValidationResult
+from sot_validator.models import (
+    Site,
+    ValidationClassification,
+    ValidationResult,
+)
 from sot_validator.reconciliation import (
     InventoryReconciler,
     ReconciliationReport,
@@ -69,6 +77,10 @@ from sot_validator.reporting import (
     DEFAULT_DASHBOARD_FILENAME,
     generate_all_reports,
     generate_html_dashboard,
+)
+from sot_validator.signals.directory_dns import (
+    ActiveDirectoryCollector,
+    DnsDhcpLeaseCollector,
 )
 from sot_validator.signals.hypervisor import MultiVCenterInventoryProvider
 from sot_validator.signals.icmp import IcmpProbeCollector
@@ -106,6 +118,7 @@ def _has_source_flags(args: argparse.Namespace) -> bool:
             "fixtures",
             "fixture_path",
             "sql_dump",
+            "sqlite_path",
             "csv_dir",
             "json_export",
             "scrape_url",
@@ -116,8 +129,13 @@ def _has_source_flags(args: argparse.Namespace) -> bool:
 def _build_sot_client(
     args: argparse.Namespace, *, default_to_fixtures: bool = False
 ) -> Optional[SoTClient]:
+    if getattr(args, "sqlite_path", None) is not None:
+        return SqlExportSoTClient.from_sqlite(args.sqlite_path)
     if getattr(args, "sql_dump", None) is not None:
-        return SqlExportSoTClient.from_sql_dump(args.sql_dump)
+        sql_path = Path(args.sql_dump)
+        if sql_path.suffix.lower() in (".db", ".sqlite", ".sqlite3"):
+            return SqlExportSoTClient.from_sqlite(sql_path)
+        return SqlExportSoTClient.from_sql_dump(sql_path)
     if getattr(args, "csv_dir", None) is not None:
         return SqlExportSoTClient.from_csv_dir(args.csv_dir)
     if getattr(args, "json_export", None) is not None:
@@ -210,6 +228,12 @@ def _add_source_arguments(parser: argparse.ArgumentParser) -> None:
         help="Path to a read-only SQL dump file (.sql).",
     )
     parser.add_argument(
+        "--sqlite-path",
+        type=Path,
+        default=None,
+        help="Path to a read-only SQLite database export.",
+    )
+    parser.add_argument(
         "--csv-dir",
         type=Path,
         default=None,
@@ -241,6 +265,24 @@ def _add_validation_arguments(parser: argparse.ArgumentParser) -> None:
         type=Path,
         default=None,
         help="Path to a read-only SNMP/ICMP discovery fixture JSON file.",
+    )
+    parser.add_argument(
+        "--ad-json",
+        type=Path,
+        default=None,
+        help="Path to an Active Directory computer account export JSON file.",
+    )
+    parser.add_argument(
+        "--dns-json",
+        type=Path,
+        default=None,
+        help="Path to a DNS forward/reverse (A/PTR) records JSON file.",
+    )
+    parser.add_argument(
+        "--dhcp-json",
+        type=Path,
+        default=None,
+        help="Path to a /24-scoped DHCP lease export JSON file.",
     )
     parser.add_argument(
         "--active-within-days",
@@ -333,14 +375,95 @@ def _resolve_sites_for_command(
     return _extract_sites(args, snapshot_dir, default_to_fixtures=use_fixtures)
 
 
+def _load_ad_collector(
+    ad_json_path: Optional[Path],
+    *,
+    active_within_days: float,
+    stale_after_days: float,
+    evaluation_time: Optional[str],
+) -> Optional[ActiveDirectoryCollector]:
+    if ad_json_path is None:
+        return None
+    raw = json.loads(Path(ad_json_path).read_text(encoding="utf-8"))
+    if isinstance(raw, Mapping):
+        records = (
+            raw.get("computers")
+            or raw.get("records")
+            or raw.get("accounts")
+            or []
+        )
+    elif isinstance(raw, list):
+        records = raw
+    else:
+        records = []
+    return ActiveDirectoryCollector(
+        records=records,
+        active_within_days=active_within_days,
+        stale_after_days=stale_after_days,
+        evaluation_time=evaluation_time,
+    )
+
+
+def _load_dns_dhcp_collector(
+    dns_json_path: Optional[Path],
+    dhcp_json_path: Optional[Path],
+    *,
+    evaluation_time: Optional[str],
+) -> Optional[DnsDhcpLeaseCollector]:
+    if dns_json_path is None and dhcp_json_path is None:
+        return None
+
+    dns_records: Optional[Any] = None
+    a_records: Optional[Any] = None
+    ptr_records: Optional[Any] = None
+    if dns_json_path is not None:
+        raw_dns = json.loads(Path(dns_json_path).read_text(encoding="utf-8"))
+        if isinstance(raw_dns, Mapping):
+            if "a_records" in raw_dns or "ptr_records" in raw_dns or "forward_records" in raw_dns or "reverse_records" in raw_dns:
+                a_records = raw_dns.get("a_records") or raw_dns.get("forward_records")
+                ptr_records = raw_dns.get("ptr_records") or raw_dns.get("reverse_records")
+                dns_records = raw_dns.get("dns_records") or raw_dns.get("records")
+            else:
+                dns_records = (
+                    raw_dns.get("records")
+                    or raw_dns.get("dns_records")
+                    or []
+                )
+        elif isinstance(raw_dns, list):
+            dns_records = raw_dns
+
+    dhcp_leases: Optional[Any] = None
+    if dhcp_json_path is not None:
+        raw_dhcp = json.loads(Path(dhcp_json_path).read_text(encoding="utf-8"))
+        if isinstance(raw_dhcp, Mapping):
+            dhcp_leases = (
+                raw_dhcp.get("leases")
+                or raw_dhcp.get("dhcp_leases")
+                or raw_dhcp.get("records")
+                or []
+            )
+        elif isinstance(raw_dhcp, list):
+            dhcp_leases = raw_dhcp
+
+    return DnsDhcpLeaseCollector(
+        dns_records=dns_records,
+        a_records=a_records,
+        ptr_records=ptr_records,
+        dhcp_leases=dhcp_leases,
+        evaluation_time=evaluation_time,
+    )
+
+
 def _build_classification_engine(
     args: argparse.Namespace,
     sites: Sequence[Site],
 ) -> tuple[ClassificationEngine, Optional[str]]:
     eval_time = _infer_evaluation_time(args, sites)
+    active_days = float(getattr(args, "active_within_days", 7.0))
+    stale_days = float(getattr(args, "stale_after_days", 30.0))
     policy = ClassificationPolicy(
-        active_within_days=getattr(args, "active_within_days", 7.0),
-        stale_after_days=getattr(args, "stale_after_days", 30.0),
+        active_within_days=active_days,
+        stale_after_days=stale_days,
     )
 
     hypervisor_provider: Optional[MultiVCenterInventoryProvider] = None
@@ -357,11 +480,25 @@ def _build_classification_engine(
             args.snmp_fixture
         )
 
+    ad_collector = _load_ad_collector(
+        getattr(args, "ad_json", None),
+        active_within_days=active_days,
+        stale_after_days=stale_days,
+        evaluation_time=eval_time,
+    )
+    dns_dhcp_collector = _load_dns_dhcp_collector(
+        getattr(args, "dns_json", None),
+        getattr(args, "dhcp_json", None),
+        evaluation_time=eval_time,
+    )
+
     engine = ClassificationEngine(
         policy=policy,
         icmp_collector=icmp_collector,
         management_collector=management_collector,
         hypervisor_provider=hypervisor_provider,
+        ad_collector=ad_collector,
+        dns_dhcp_collector=dns_dhcp_collector,
         evaluation_time=eval_time,
     )
     return engine, eval_time
@@ -596,11 +733,17 @@ def cmd_report(args: argparse.Namespace) -> int:
     else:
         for candidate_dir in (output_dir, input_dir, snapshot_dir):
             if candidate_dir is not None:
-                par_path = candidate_dir / "parity_report.json"
-                if par_path.exists():
-                    parity_data = json.loads(
-                        par_path.read_text(encoding="utf-8")
-                    )
+                for par_filename in (
+                    "migration_parity_report.json",
+                    "parity_report.json",
+                ):
+                    par_path = candidate_dir / par_filename
+                    if par_path.exists():
+                        parity_data = json.loads(
+                            par_path.read_text(encoding="utf-8")
+                        )
+                        break
+                if parity_data is not None:
                     break
 
     ups_report: Optional[UpsFleetHealthReport] = None
@@ -626,9 +769,12 @@ def cmd_report(args: argparse.Namespace) -> int:
     else:
         for candidate_dir in (output_dir, input_dir, snapshot_dir):
             if candidate_dir is not None:
-                t_path = candidate_dir / "itsm_tickets.json"
-                if t_path.exists():
-                    itsm_tickets = JsonFileItsmSink(t_path).tickets
+                for t_filename in ("itsm_tickets.json", "itsm_ticket.json"):
+                    t_path = candidate_dir / t_filename
+                    if t_path.exists():
+                        itsm_tickets = JsonFileItsmSink(t_path).tickets
+                        break
+                if itsm_tickets is not None:
                     break
 
     eval_time = getattr(args, "evaluation_time", None) or file_eval_time
@@ -647,7 +793,7 @@ def cmd_report(args: argparse.Namespace) -> int:
         approval_manifest=approval_manifest,
         reconciliation_report=reconciliation_report,
         port_reclamation_plan=port_plan,
-        parity_report=parity_data,
+        migration_parity_report=parity_data,
         ups_health_report=ups_report,
         itsm_tickets=itsm_tickets,
     )
@@ -906,8 +1052,11 @@ def cmd_remediate(args: argparse.Namespace) -> int:
 
     confirm_write = bool(args.confirm_write)
     itsm_sink: Optional[JsonFileItsmSink] = None
-    if getattr(args, "itsm_sink_file", None) is not None:
-        itsm_sink = JsonFileItsmSink(Path(args.itsm_sink_file))
+    itsm_sink_file = getattr(args, "itsm_tickets_file", None) or getattr(
+        args, "itsm_sink_file", None
+    )
+    if itsm_sink_file is not None:
+        itsm_sink = JsonFileItsmSink(Path(itsm_sink_file))
 
     itsm_ticket_obj: Optional[ItsmTicketRequest] = None
     if getattr(args, "itsm_ticket_file", None) is not None:
@@ -919,11 +1068,17 @@ def cmd_remediate(args: argparse.Namespace) -> int:
         elif isinstance(raw_tkt, dict):
             itsm_ticket_obj = ItsmTicketRequest.from_dict(raw_tkt)
 
+    itsm_ticket_id = getattr(args, "itsm_ticket_id", None)
+    if itsm_ticket_id is None and itsm_sink is not None and len(itsm_sink.tickets) == 1:
+        itsm_ticket_id = itsm_sink.tickets[0].ticket_id
+
     require_itsm = bool(
         getattr(args, "require_itsm_approval", False)
-        or getattr(args, "itsm_ticket_id", None) is not None
+        or itsm_ticket_id is not None
+        or itsm_sink is not None
         or itsm_ticket_obj is not None
     )
+    allow_scheduled = bool(getattr(args, "itsm_allow_scheduled", False))
 
     executor = RemediationExecutor(
         dry_run=not confirm_write,
@@ -932,8 +1087,9 @@ def cmd_remediate(args: argparse.Namespace) -> int:
         strict_approval=bool(args.strict_approval),
         require_itsm_approval=require_itsm,
         itsm_sink=itsm_sink,
-        itsm_ticket_id=getattr(args, "itsm_ticket_id", None),
+        itsm_ticket_id=itsm_ticket_id,
         itsm_ticket=itsm_ticket_obj,
+        allow_scheduled_ticket=allow_scheduled,
     )
 
     sqlite_conn: Optional[sqlite3.Connection] = None
@@ -978,8 +1134,9 @@ def cmd_remediate(args: argparse.Namespace) -> int:
             reviewer=args.reviewer,
             require_itsm_approval=require_itsm,
             itsm_sink=itsm_sink,
-            itsm_ticket_id=getattr(args, "itsm_ticket_id", None),
+            itsm_ticket_id=itsm_ticket_id,
             itsm_ticket=itsm_ticket_obj,
+            allow_scheduled_ticket=allow_scheduled,
         )
 
         remediate_sql_path = output_dir / "remediate.sql"
@@ -1144,8 +1301,73 @@ def cmd_campaign(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_preflight(args: argparse.Namespace) -> int:
+    output_dir = Path(args.output_dir or "./reports")
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    sites = _resolve_sites_for_command(
+        args, output_dir, default_to_fixtures=True
+    )
+    pilot_site_ids = _parse_str_list(args.pilot_sites)
+    if not pilot_site_ids:
+        pilot_site_ids = [s.site_id for s in sites]
+
+    target_subnets: Optional[dict[str, list[str]]] = None
+    if args.target_subnets_json is not None:
+        raw_sub = json.loads(
+            Path(args.target_subnets_json).read_text(encoding="utf-8")
+        )
+        if isinstance(raw_sub, Mapping):
+            target_subnets = {
+                str(k): [str(c) for c in v]
+                for k, v in raw_sub.items()
+                if isinstance(v, Sequence) and not isinstance(v, (str, bytes))
+            }
+
+    vsphere_conn: Optional[VSphereRestConnector] = None
+    if args.vcenter_json is not None:
+        raw_vc = json.loads(
+            Path(args.vcenter_json).read_text(encoding="utf-8")
+        )
+        vsphere_conn = VSphereRestConnector(fixture_data=raw_vc)
+
+    snmp_conn: Optional[SnmpWalkConnector] = None
+    if args.snmp_fixture is not None:
+        raw_snmp = json.loads(
+            Path(args.snmp_fixture).read_text(encoding="utf-8")
+        )
+        snmp_conn = SnmpWalkConnector(fixture_data=raw_snmp)
+
+    sot_client = _build_sot_client(args, default_to_fixtures=False)
+    validator = PilotCutoverValidator(
+        sot_client=sot_client,
+        vsphere_connector=vsphere_conn,
+        snmp_connector=snmp_conn,
+        recommended_min_sites=args.recommended_min_sites,
+        recommended_max_sites=args.recommended_max_sites,
+    )
+    report = validator.validate(
+        pilot_site_ids=pilot_site_ids,
+        sites=sites,
+        target_subnets_by_site=target_subnets,
+    )
+
+    payload_text = json.dumps(report.to_dict(), indent=2)
+    report_path = output_dir / "preflight_report.json"
+    report_path.write_text(payload_text, encoding="utf-8")
+
+    if args.output is not None:
+        custom_out = Path(args.output)
+        custom_out.parent.mkdir(parents=True, exist_ok=True)
+        custom_out.write_text(payload_text, encoding="utf-8")
+
+    if getattr(args, "strict", False) and not report.ready:
+        return 1
+    return 0
+
+
 def cmd_reclaim_ports(args: argparse.Namespace) -> int:
-    output_dir = Path(args.output_dir or "./output")
+    output_dir = Path(args.output_dir or "./reports")
     output_dir.mkdir(parents=True, exist_ok=True)
     sites = _resolve_sites_for_command(
         args, output_dir, default_to_fixtures=True
@@ -1156,6 +1378,24 @@ def cmd_reclaim_ports(args: argparse.Namespace) -> int:
         store, _ = _open_history_store(Path(args.db_path))
     elif Path("./history.db").exists():
         store, _ = _open_history_store(Path("./history.db"))
+
+    explicit_streaks: Optional[list[ItemStreakSummary]] = None
+    if args.streaks_json is not None:
+        raw_streaks = json.loads(
+            Path(args.streaks_json).read_text(encoding="utf-8")
+        )
+        if isinstance(raw_streaks, Mapping):
+            streak_items = raw_streaks.get("streaks", [])
+        elif isinstance(raw_streaks, list):
+            streak_items = raw_streaks
+        else:
+            streak_items = []
+        explicit_streaks = [
+            s
+            if isinstance(s, ItemStreakSummary)
+            else ItemStreakSummary.from_dict(s)
+            for s in streak_items
+        ]
 
     lldp_data: Optional[Any] = None
     if args.lldp_json is not None:
@@ -1169,13 +1409,47 @@ def cmd_reclaim_ports(args: argparse.Namespace) -> int:
 
     eval_time = args.evaluation_time or _infer_evaluation_time(args, sites)
     try:
+        if (
+            explicit_streaks is None
+            and store is None
+            and args.min_inactive_runs == 1
+        ):
+            synth_dt = (
+                datetime.fromisoformat(eval_time.replace("Z", "+00:00"))
+                if eval_time
+                else datetime.now(timezone.utc)
+            )
+            explicit_streaks = []
+            for site in sites:
+                for dev in site.devices:
+                    for port in dev.ports:
+                        oper_str = (port.oper_status or "").strip().lower()
+                        if oper_str in ("down", "notpresent", "lowerlayerdown", "dormant", "2"):
+                            explicit_streaks.append(
+                                ItemStreakSummary(
+                                    site_id=site.site_id,
+                                    item_type="Port",
+                                    item_id=port.port_id,
+                                    name=port.name,
+                                    current_classification=ValidationClassification.STALE_LIKELY_UNUSED,
+                                    current_confidence=0.95,
+                                    consecutive_stale_runs=1,
+                                    total_runs_seen=1,
+                                    first_seen_at=synth_dt,
+                                    first_stale_at=synth_dt,
+                                    stale_duration_days=max(0.0, float(args.min_inactive_days)),
+                                )
+                            )
+
+        dialect = ExtremeCliDialect(args.dialect)
         planner = ExtremePortReclamationPlanner(
             min_inactive_runs=args.min_inactive_runs,
             min_inactive_days=args.min_inactive_days,
-            dialect=ExtremeCliDialect(args.dialect),
+            dialect=dialect,
         )
         plan = planner.plan(
             sites=sites,
+            streaks=explicit_streaks,
             history_store=store,
             lldp_neighbors=lldp_data,
             snmp_oids_by_device=snmp_data,
@@ -1185,14 +1459,32 @@ def cmd_reclaim_ports(args: argparse.Namespace) -> int:
         if store is not None:
             store.close()
 
-    plan_path = (
-        Path(args.output_file)
-        if args.output_file is not None
-        else output_dir / "port_reclamation_plan.json"
-    )
-    plan_path.parent.mkdir(parents=True, exist_ok=True)
-    plan_path.write_text(plan.to_json(indent=2), encoding="utf-8")
+    plan_json = plan.to_json(indent=2)
+    default_plan_path = output_dir / "port_reclamation_plan.json"
+    default_plan_path.write_text(plan_json, encoding="utf-8")
 
+    if args.output_file is not None:
+        custom_plan_path = Path(args.output_file)
+        custom_plan_path.parent.mkdir(parents=True, exist_ok=True)
+        custom_plan_path.write_text(plan_json, encoding="utf-8")
+
+    # Write both dialect-specific and canonical CLI script filenames
+    primary_disable = (
+        plan.exos_script
+        if dialect is ExtremeCliDialect.EXOS
+        else plan.voss_script
+    )
+    primary_rollback = (
+        plan.exos_rollback_script
+        if dialect is ExtremeCliDialect.EXOS
+        else plan.voss_rollback_script
+    )
+    (output_dir / "port_reclamation_disable.cli").write_text(
+        primary_disable, encoding="utf-8"
+    )
+    (output_dir / "port_reclamation_rollback.cli").write_text(
+        primary_rollback, encoding="utf-8"
+    )
     (output_dir / "reclaim_ports_exos.xsf").write_text(
         plan.exos_script, encoding="utf-8"
     )
@@ -1209,7 +1501,7 @@ def cmd_reclaim_ports(args: argparse.Namespace) -> int:
 
 
 def cmd_export_modern_sot(args: argparse.Namespace) -> int:
-    output_dir = Path(args.output_dir or "./output")
+    output_dir = Path(args.output_dir or "./reports")
     output_dir.mkdir(parents=True, exist_ok=True)
     sites = _resolve_sites_for_command(
         args, output_dir, default_to_fixtures=True
@@ -1257,24 +1549,29 @@ def cmd_export_modern_sot(args: argparse.Namespace) -> int:
         generated_at=eval_time,
     )
 
-    json_out = (
-        Path(args.json_out)
-        if args.json_out is not None
-        else output_dir / f"{args.target_platform}_golden_bundle.json"
-    )
-    exporter.export_json(output_path=json_out)
+    default_json_out = output_dir / "modern_sot_bundle.json"
+    platform_json_out = output_dir / f"{args.target_platform}_golden_bundle.json"
+    json_content = exporter.export_json(output_path=default_json_out)
+    platform_json_out.write_text(json_content, encoding="utf-8")
 
-    csv_bundle_dir = (
-        Path(args.csv_bundle_dir)
-        if args.csv_bundle_dir is not None
-        else output_dir / f"{args.target_platform}_csv_bundle"
-    )
-    exporter.export_csv_bundle(csv_bundle_dir)
+    if args.json_out is not None:
+        custom_json = Path(args.json_out)
+        custom_json.parent.mkdir(parents=True, exist_ok=True)
+        custom_json.write_text(json_content, encoding="utf-8")
+
+    default_csv_dir = output_dir / "csv_bundle"
+    exporter.export_csv_bundle(default_csv_dir)
+    platform_csv_dir = output_dir / f"{args.target_platform}_csv_bundle"
+    exporter.export_csv_bundle(platform_csv_dir)
+
+    if args.csv_bundle_dir is not None:
+        exporter.export_csv_bundle(Path(args.csv_bundle_dir))
+
     return 0
 
 
 def cmd_parity_check(args: argparse.Namespace) -> int:
-    output_dir = Path(args.output_dir or "./output")
+    output_dir = Path(args.output_dir or "./reports")
     output_dir.mkdir(parents=True, exist_ok=True)
 
     golden_bundle: Optional[Any] = None
@@ -1322,6 +1619,7 @@ def cmd_parity_check(args: argparse.Namespace) -> int:
             sites=sites,
             validation_results=results,
             reconciliation_report=recon_report,
+            target_platform=args.target_platform,
         ).to_dict()
 
     waived_ids = _parse_str_list(args.waive_discrepancies)
@@ -1332,7 +1630,7 @@ def cmd_parity_check(args: argparse.Namespace) -> int:
         or (sites and _infer_evaluation_time(args, sites))
     )
 
-    validator = ModernSoTParityValidator(
+    validator = DualRunParityChecker(
         golden_bundle=golden_bundle,
         modern_bundle=modern_bundle,
         sites=sites,
@@ -1341,26 +1639,36 @@ def cmd_parity_check(args: argparse.Namespace) -> int:
         stale_item_ids=stale_ids if stale_ids else None,
         waived_discrepancy_ids=waived_ids if waived_ids else None,
         waive_all_parity_discrepancies=bool(args.waive_all),
+        target_platform=args.target_platform,
         evaluated_at=eval_time,
     )
     report = validator.evaluate_sites()
+    report_json = report.to_json(indent=2)
 
-    out_file = (
-        Path(args.output_file)
-        if args.output_file is not None
-        else output_dir / "parity_report.json"
+    (output_dir / "migration_parity_report.json").write_text(
+        report_json, encoding="utf-8"
     )
-    out_file.parent.mkdir(parents=True, exist_ok=True)
-    out_file.write_text(report.to_json(indent=2), encoding="utf-8")
+    (output_dir / "parity_report.json").write_text(
+        report_json, encoding="utf-8"
+    )
+
+    if args.output_file is not None:
+        out_file = Path(args.output_file)
+        out_file.parent.mkdir(parents=True, exist_ok=True)
+        out_file.write_text(report_json, encoding="utf-8")
     return 0
 
 
 def cmd_ups_health(args: argparse.Namespace) -> int:
-    output_dir = Path(args.output_dir or "./output")
+    output_dir = Path(args.output_dir or "./reports")
     output_dir.mkdir(parents=True, exist_ok=True)
-    sites = _resolve_sites_for_command(
-        args, output_dir, default_to_fixtures=True
-    )
+
+    has_site_source = _has_source_flags(args) or args.snapshot_dir is not None
+    sites: Optional[list[Site]] = None
+    if has_site_source or args.snmp_fixture is None:
+        sites = _resolve_sites_for_command(
+            args, output_dir, default_to_fixtures=True
+        )
 
     telemetry_data: Optional[Mapping[str, Any]] = None
     if args.snmp_fixture is not None:
@@ -1368,28 +1676,36 @@ def cmd_ups_health(args: argparse.Namespace) -> int:
             Path(args.snmp_fixture).read_text(encoding="utf-8")
         )
 
-    eval_time = args.evaluation_time or _infer_evaluation_time(args, sites)
+    eval_time = args.evaluation_time or (
+        sites and _infer_evaluation_time(args, sites)
+    )
     evaluator = ApcUpsHealthEvaluator(
         min_runtime_minutes=args.min_runtime_minutes,
+        critical_runtime_minutes=args.critical_runtime_minutes,
         max_temp_celsius=args.max_temp_celsius,
+        critical_temp_celsius=args.critical_temp_celsius,
         max_load_pct=args.max_load_pct,
+        critical_load_pct=args.critical_load_pct,
         telemetry_by_target=telemetry_data,
         evaluation_time=eval_time,
     )
-    fleet_report = evaluator.evaluate_fleet(sites, evaluation_time=eval_time)
-
-    out_file = (
-        Path(args.output_file)
-        if args.output_file is not None
-        else output_dir / "ups_health_report.json"
+    fleet_report = evaluator.evaluate_fleet(
+        sites if sites else None, evaluation_time=eval_time
     )
-    out_file.parent.mkdir(parents=True, exist_ok=True)
-    out_file.write_text(fleet_report.to_json(indent=2), encoding="utf-8")
+    report_json = fleet_report.to_json(indent=2)
+
+    default_out = output_dir / "ups_health_report.json"
+    default_out.write_text(report_json, encoding="utf-8")
+
+    if args.output_file is not None:
+        out_file = Path(args.output_file)
+        out_file.parent.mkdir(parents=True, exist_ok=True)
+        out_file.write_text(report_json, encoding="utf-8")
     return 0
 
 
 def cmd_itsm(args: argparse.Namespace) -> int:
-    output_dir = Path(args.output_dir or "./output")
+    output_dir = Path(args.output_dir or "./reports")
     output_dir.mkdir(parents=True, exist_ok=True)
 
     sink_file = (
@@ -1399,74 +1715,120 @@ def cmd_itsm(args: argparse.Namespace) -> int:
     )
     sink = JsonFileItsmSink(sink_file)
 
+    eval_ts = args.approved_at or args.evaluation_time
+
     if args.approve_ticket_id is not None:
         sink.approve_ticket(
             args.approve_ticket_id,
             approved_by=args.approved_by,
-            approved_at=args.evaluation_time,
+            approved_at=eval_ts,
         )
 
     if args.reject_ticket_id is not None:
         sink.reject_ticket(
             args.reject_ticket_id,
             approved_by=args.approved_by,
-            approved_at=args.evaluation_time,
+            approved_at=eval_ts,
         )
 
-    builder = ItsmTicketPayloadBuilder(
-        default_project_key=args.project_key,
-        evaluation_time=args.evaluation_time,
-    )
+    builder_kwargs: dict[str, Any] = {
+        "default_project_key": args.project_key,
+        "evaluation_time": args.evaluation_time,
+    }
+    if args.cmdb_ci:
+        builder_kwargs["default_cmdb_ci"] = args.cmdb_ci
+    builder = ItsmTicketPayloadBuilder(**builder_kwargs)
 
     generated_tickets: list[ItsmTicketRequest] = []
     initial_status = TicketApprovalStatus(args.approval_status)
+    approved_by_arg = (
+        args.approved_by
+        if initial_status is TicketApprovalStatus.APPROVED
+        else None
+    )
+
+    manifest_obj: Optional[RemediationApprovalManifest] = None
+    port_plan_obj: Optional[PortReclamationPlan] = None
+    recon_obj: Optional[ReconciliationReport] = None
+    ups_obj: Optional[UpsFleetHealthReport] = None
+    generic_artifact_obj: Optional[Any] = None
 
     if args.manifest_file is not None:
-        manifest = RemediationApprovalManifest.import_json(
+        manifest_obj = RemediationApprovalManifest.import_json(
             Path(args.manifest_file)
         )
         tkt = builder.build_quarantine_ticket(
-            manifest,
+            manifest_obj,
             ticket_id=args.ticket_id,
+            site_id=args.site_id,
+            cmdb_ci=args.cmdb_ci,
             approval_status=initial_status,
-            approved_by=args.approved_by if initial_status is TicketApprovalStatus.APPROVED else None,
+            approved_by=approved_by_arg,
         )
         sink.submit_ticket(tkt)
         generated_tickets.append(tkt)
 
     if args.port_plan_file is not None:
-        port_plan = PortReclamationPlan.from_json(
+        port_plan_obj = PortReclamationPlan.from_json(
             Path(args.port_plan_file).read_text(encoding="utf-8")
         )
         tkt = builder.build_port_reclamation_ticket(
-            port_plan,
+            port_plan_obj,
             ticket_id=args.ticket_id if not generated_tickets else None,
+            cmdb_ci=args.cmdb_ci,
             approval_status=initial_status,
-            approved_by=args.approved_by if initial_status is TicketApprovalStatus.APPROVED else None,
+            approved_by=approved_by_arg,
         )
         sink.submit_ticket(tkt)
         generated_tickets.append(tkt)
 
     if args.reconciliation_file is not None:
-        recon = ReconciliationReport.from_json(Path(args.reconciliation_file))
+        recon_obj = ReconciliationReport.from_json(
+            Path(args.reconciliation_file)
+        )
         tkt = builder.build_onboarding_ticket(
-            recon,
+            recon_obj,
             ticket_id=args.ticket_id if not generated_tickets else None,
+            site_id=args.site_id,
+            cmdb_ci=args.cmdb_ci,
             approval_status=initial_status,
-            approved_by=args.approved_by if initial_status is TicketApprovalStatus.APPROVED else None,
+            approved_by=approved_by_arg,
         )
         sink.submit_ticket(tkt)
         generated_tickets.append(tkt)
 
     if args.ups_health_file is not None:
-        ups_rep = UpsFleetHealthReport.from_json(
+        ups_obj = UpsFleetHealthReport.from_json(
             Path(args.ups_health_file).read_text(encoding="utf-8")
         )
         tkt = builder.build_ups_incident_ticket(
-            ups_rep,
+            ups_obj,
             ticket_id=args.ticket_id if not generated_tickets else None,
+            site_id=args.site_id,
+            cmdb_ci=args.cmdb_ci,
             approval_status=initial_status,
-            approved_by=args.approved_by if initial_status is TicketApprovalStatus.APPROVED else None,
+            approved_by=approved_by_arg,
+        )
+        sink.submit_ticket(tkt)
+        generated_tickets.append(tkt)
+
+    if args.artifact_file is not None:
+        generic_artifact_obj = json.loads(
+            Path(args.artifact_file).read_text(encoding="utf-8")
+        )
+        wtype = (
+            ItsmWorkflowType(args.workflow_type)
+            if args.workflow_type is not None
+            else None
+        )
+        tkt = builder.build_ticket(
+            generic_artifact_obj,
+            workflow_type=wtype,
+            ticket_id=args.ticket_id if not generated_tickets else None,
+            site_id=args.site_id,
+            cmdb_ci=args.cmdb_ci,
+            approval_status=initial_status,
+            approved_by=approved_by_arg,
         )
         sink.submit_ticket(tkt)
         generated_tickets.append(tkt)
@@ -1474,47 +1836,52 @@ def cmd_itsm(args: argparse.Namespace) -> int:
     provider = ItsmProvider(args.provider)
     active_tickets = generated_tickets if generated_tickets else sink.tickets
     if active_tickets:
+        first_ticket_json = active_tickets[-1].to_json(indent=2)
+        (output_dir / "itsm_ticket.json").write_text(
+            first_ticket_json, encoding="utf-8"
+        )
+        if args.output is not None:
+            custom_out = Path(args.output)
+            custom_out.parent.mkdir(parents=True, exist_ok=True)
+            custom_out.write_text(first_ticket_json, encoding="utf-8")
+
         formatted_payloads = [
             ItsmWebhookSerializer.format_payload(
                 t, provider=provider, project_key=args.project_key
             )
             for t in active_tickets
         ]
-        payload_out = (
-            Path(args.payload_out)
-            if args.payload_out is not None
-            else output_dir / f"itsm_{provider.value}_payloads.json"
+        payload_data = (
+            formatted_payloads[0]
+            if len(formatted_payloads) == 1
+            else formatted_payloads
         )
-        payload_out.parent.mkdir(parents=True, exist_ok=True)
-        payload_out.write_text(
-            json.dumps(
-                formatted_payloads[0]
-                if len(formatted_payloads) == 1
-                else formatted_payloads,
-                indent=2,
-            ),
-            encoding="utf-8",
+        payload_text = json.dumps(payload_data, indent=2)
+
+        (output_dir / f"itsm_payload_{provider.value}.json").write_text(
+            payload_text, encoding="utf-8"
         )
+        (output_dir / f"itsm_{provider.value}_payloads.json").write_text(
+            payload_text, encoding="utf-8"
+        )
+        if args.payload_out is not None:
+            p_out = Path(args.payload_out)
+            p_out.parent.mkdir(parents=True, exist_ok=True)
+            p_out.write_text(payload_text, encoding="utf-8")
 
     if args.verify_ticket_id is not None:
-        verifier = ItsmGateVerifier(sink=sink, raise_on_failure=True)
-        manifest_to_verify = (
-            RemediationApprovalManifest.import_json(Path(args.manifest_file))
-            if args.manifest_file is not None
-            else None
+        verifier = ItsmGateVerifier(
+            sink=sink,
+            allow_scheduled=bool(args.allow_scheduled),
+            raise_on_failure=True,
         )
-        plan_to_verify = (
-            PortReclamationPlan.from_json(
-                Path(args.port_plan_file).read_text(encoding="utf-8")
-            )
-            if args.port_plan_file is not None
-            else None
-        )
-        verify_res = verifier.verify_change_ticket_approved(
+        verify_res = verifier.require_change_ticket_approved(
             args.verify_ticket_id,
             expected_sha256=args.expected_sha256,
-            manifest=manifest_to_verify,
-            plan=plan_to_verify,
+            manifest=manifest_obj,
+            plan=port_plan_obj,
+            artifact=generic_artifact_obj or recon_obj or ups_obj,
+            allow_scheduled=bool(args.allow_scheduled),
         )
         (output_dir / "itsm_verification_result.json").write_text(
             json.dumps(verify_res.to_dict(), indent=2), encoding="utf-8"
@@ -1548,7 +1915,7 @@ def build_parser() -> argparse.ArgumentParser:
     # 2. validate
     validate_parser = subparsers.add_parser(
         "validate",
-        help="Evaluate passive, hypervisor, and scoped active signals against site snapshots.",
+        help="Evaluate passive, hypervisor, directory/DNS, and scoped active signals against site snapshots.",
     )
     validate_parser.add_argument(
         "--snapshot-dir",
@@ -1615,6 +1982,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     report_parser.add_argument(
         "--manifest-file",
+        "--manifest",
+        dest="manifest_file",
         type=Path,
         default=None,
         help="Optional Phase 2 RemediationApprovalManifest JSON file to embed in the HTML dashboard.",
@@ -1627,18 +1996,24 @@ def build_parser() -> argparse.ArgumentParser:
     )
     report_parser.add_argument(
         "--port-plan-file",
+        "--port-plan",
+        dest="port_plan_file",
         type=Path,
         default=None,
         help="Optional Phase 4 PortReclamationPlan JSON file to embed in the HTML dashboard.",
     )
     report_parser.add_argument(
         "--parity-file",
+        "--parity-report",
+        dest="parity_file",
         type=Path,
         default=None,
-        help="Optional Phase 5 ParityValidationReport JSON file to embed in the HTML dashboard.",
+        help="Optional Phase 5 MigrationParityReport JSON file to embed in the HTML dashboard.",
     )
     report_parser.add_argument(
         "--ups-health-file",
+        "--ups-report",
+        dest="ups_health_file",
         type=Path,
         default=None,
         help="Optional Phase 6 UpsFleetHealthReport JSON file to embed in the HTML dashboard.",
@@ -1986,7 +2361,9 @@ def build_parser() -> argparse.ArgumentParser:
         help="Change ticket ID to verify in the ITSM governance sink.",
     )
     remediate_parser.add_argument(
+        "--itsm-tickets-file",
         "--itsm-sink-file",
+        dest="itsm_tickets_file",
         type=Path,
         default=None,
         help="Path to a JsonFileItsmSink file containing ITSM change tickets.",
@@ -1996,6 +2373,12 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         default=None,
         help="Path to an individual ItsmTicketRequest JSON file.",
+    )
+    remediate_parser.add_argument(
+        "--itsm-allow-scheduled",
+        action="store_true",
+        default=False,
+        help="Allow SCHEDULED ITSM change tickets in addition to APPROVED tickets.",
     )
     remediate_parser.set_defaults(func=cmd_remediate)
 
@@ -2126,7 +2509,76 @@ def build_parser() -> argparse.ArgumentParser:
     _add_validation_arguments(campaign_parser)
     campaign_parser.set_defaults(func=cmd_campaign)
 
-    # 10. reclaim-ports (Phase 4)
+    # 10. preflight (Phase 4)
+    preflight_parser = subparsers.add_parser(
+        "preflight",
+        help="Run pre-flight cutover readiness checks verifying /24 scoping, read-only guardrails, and endpoint credentials.",
+    )
+    preflight_parser.add_argument(
+        "--snapshot-dir",
+        type=Path,
+        default=None,
+        help="Directory containing extracted site snapshots.",
+    )
+    preflight_parser.add_argument(
+        "--output-dir",
+        type=Path,
+        default=Path("./reports"),
+        help="Directory to write preflight_report.json (default: ./reports).",
+    )
+    preflight_parser.add_argument(
+        "--output",
+        type=Path,
+        default=None,
+        help="Optional explicit output file path for preflight_report.json.",
+    )
+    preflight_parser.add_argument(
+        "--pilot-sites",
+        nargs="+",
+        action="extend",
+        default=None,
+        help="Pilot site IDs (comma-separated or space-separated; defaults to all loaded sites).",
+    )
+    preflight_parser.add_argument(
+        "--target-subnets-json",
+        type=Path,
+        default=None,
+        help="Optional JSON file mapping site_id -> [cidr, ...].",
+    )
+    preflight_parser.add_argument(
+        "--vcenter-json",
+        type=Path,
+        default=None,
+        help="Optional vCenter inventory fixture JSON file.",
+    )
+    preflight_parser.add_argument(
+        "--snmp-fixture",
+        type=Path,
+        default=None,
+        help="Optional SNMP discovery fixture JSON file.",
+    )
+    preflight_parser.add_argument(
+        "--recommended-min-sites",
+        type=int,
+        default=3,
+        help="Recommended minimum number of pilot sites (default: 3).",
+    )
+    preflight_parser.add_argument(
+        "--recommended-max-sites",
+        type=int,
+        default=5,
+        help="Recommended maximum number of pilot sites (default: 5).",
+    )
+    preflight_parser.add_argument(
+        "--strict",
+        action="store_true",
+        default=False,
+        help="Return non-zero exit code (1) if report.ready is False.",
+    )
+    _add_source_arguments(preflight_parser)
+    preflight_parser.set_defaults(func=cmd_preflight)
+
+    # 11. reclaim-ports (Phase 4)
     reclaim_ports_parser = subparsers.add_parser(
         "reclaim-ports",
         help="Generate staged dry-run Extreme Networks switch port & PoE reclamation plans with LLDP Uplink Guard.",
@@ -2140,11 +2592,13 @@ def build_parser() -> argparse.ArgumentParser:
     reclaim_ports_parser.add_argument(
         "--output-dir",
         type=Path,
-        default=Path("./output"),
-        help="Directory to write port_reclamation_plan.json and EXOS/VOSS CLI scripts (default: ./output).",
+        default=Path("./reports"),
+        help="Directory to write port_reclamation_plan.json and EXOS/VOSS CLI scripts (default: ./reports).",
     )
     reclaim_ports_parser.add_argument(
+        "--output",
         "--output-file",
+        dest="output_file",
         type=Path,
         default=None,
         help="Optional custom path for port_reclamation_plan.json.",
@@ -2156,6 +2610,12 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         default=None,
         help="Optional HistoryStore SQLite DB or JSON file for port inactivity streaks.",
+    )
+    reclaim_ports_parser.add_argument(
+        "--streaks-json",
+        type=Path,
+        default=None,
+        help="Optional JSON file containing streak summaries or history_summary.json.",
     )
     reclaim_ports_parser.add_argument(
         "--lldp-json",
@@ -2196,9 +2656,10 @@ def build_parser() -> argparse.ArgumentParser:
     _add_source_arguments(reclaim_ports_parser)
     reclaim_ports_parser.set_defaults(func=cmd_reclaim_ports)
 
-    # 11. export-modern-sot (Phase 5)
+    # 12. export-modern-sot (Phase 5)
     export_sot_parser = subparsers.add_parser(
         "export-modern-sot",
+        aliases=["migrate-export"],
         help="Export golden validated inventory into normalized NetBox or Nautobot JSON and CSV bundles.",
     )
     export_sot_parser.add_argument(
@@ -2210,8 +2671,8 @@ def build_parser() -> argparse.ArgumentParser:
     export_sot_parser.add_argument(
         "--output-dir",
         type=Path,
-        default=Path("./output"),
-        help="Directory to write NetBox/Nautobot JSON and CSV bundles (default: ./output).",
+        default=Path("./reports"),
+        help="Directory to write NetBox/Nautobot JSON and CSV bundles (default: ./reports).",
     )
     export_sot_parser.add_argument(
         "--target-platform",
@@ -2257,7 +2718,9 @@ def build_parser() -> argparse.ArgumentParser:
         help="Optional explicit output path for the JSON export bundle.",
     )
     export_sot_parser.add_argument(
+        "--csv-dir-out",
         "--csv-bundle-dir",
+        dest="csv_bundle_dir",
         type=Path,
         default=None,
         help="Optional explicit directory for the per-entity CSV import bundle.",
@@ -2273,9 +2736,10 @@ def build_parser() -> argparse.ArgumentParser:
     _add_source_arguments(export_sot_parser)
     export_sot_parser.set_defaults(func=cmd_export_modern_sot)
 
-    # 12. parity-check (Phase 5)
+    # 13. parity-check (Phase 5)
     parity_parser = subparsers.add_parser(
         "parity-check",
+        aliases=["migration-parity"],
         help="Evaluate dual-run parity and per-site migration readiness scorecards between legacy and modern SoT.",
     )
     parity_parser.add_argument(
@@ -2287,14 +2751,16 @@ def build_parser() -> argparse.ArgumentParser:
     parity_parser.add_argument(
         "--output-dir",
         type=Path,
-        default=Path("./output"),
-        help="Directory to write parity_report.json (default: ./output).",
+        default=Path("./reports"),
+        help="Directory to write migration_parity_report.json (default: ./reports).",
     )
     parity_parser.add_argument(
+        "--output",
         "--output-file",
+        dest="output_file",
         type=Path,
         default=None,
-        help="Optional explicit output path for parity_report.json.",
+        help="Optional explicit output path for migration_parity_report.json.",
     )
     parity_parser.add_argument(
         "--golden-bundle",
@@ -2307,6 +2773,12 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         default=None,
         help="Optional path to target NetBox/Nautobot JSON bundle under test.",
+    )
+    parity_parser.add_argument(
+        "--target-platform",
+        choices=["netbox", "nautobot"],
+        default="netbox",
+        help="Target modern SoT platform schema (default: netbox).",
     )
     parity_parser.add_argument(
         "--results-file",
@@ -2328,7 +2800,9 @@ def build_parser() -> argparse.ArgumentParser:
         help="Optional explicit stale item IDs that must not leak into Modern SoT.",
     )
     parity_parser.add_argument(
+        "--waived-discrepancy-ids",
         "--waive-discrepancies",
+        dest="waive_discrepancies",
         nargs="*",
         action="extend",
         default=None,
@@ -2351,7 +2825,7 @@ def build_parser() -> argparse.ArgumentParser:
     _add_source_arguments(parity_parser)
     parity_parser.set_defaults(func=cmd_parity_check)
 
-    # 13. ups-health (Phase 6)
+    # 14. ups-health (Phase 6)
     ups_parser = subparsers.add_parser(
         "ups-health",
         help="Evaluate APC UPS PowerNet-MIB battery replacement, runtime, load, and thermal health across sites.",
@@ -2365,11 +2839,13 @@ def build_parser() -> argparse.ArgumentParser:
     ups_parser.add_argument(
         "--output-dir",
         type=Path,
-        default=Path("./output"),
-        help="Directory to write ups_health_report.json (default: ./output).",
+        default=Path("./reports"),
+        help="Directory to write ups_health_report.json (default: ./reports).",
     )
     ups_parser.add_argument(
+        "--output",
         "--output-file",
+        dest="output_file",
         type=Path,
         default=None,
         help="Optional explicit output path for ups_health_report.json.",
@@ -2387,16 +2863,34 @@ def build_parser() -> argparse.ArgumentParser:
         help="Minimum battery runtime remaining in minutes before warning (default: 15.0).",
     )
     ups_parser.add_argument(
+        "--critical-runtime-minutes",
+        type=float,
+        default=5.0,
+        help="Critical battery runtime remaining in minutes (default: 5.0).",
+    )
+    ups_parser.add_argument(
         "--max-temp-celsius",
         type=float,
         default=40.0,
-        help="Maximum battery temperature in Celsius before thermal alert (default: 40.0).",
+        help="Maximum battery temperature in Celsius before thermal warning (default: 40.0).",
+    )
+    ups_parser.add_argument(
+        "--critical-temp-celsius",
+        type=float,
+        default=50.0,
+        help="Critical battery temperature in Celsius (default: 50.0).",
     )
     ups_parser.add_argument(
         "--max-load-pct",
         type=float,
         default=80.0,
         help="Maximum output load percentage before overload warning (default: 80.0).",
+    )
+    ups_parser.add_argument(
+        "--critical-load-pct",
+        type=float,
+        default=95.0,
+        help="Critical output load percentage (default: 95.0).",
     )
     ups_parser.add_argument(
         "--evaluation-time",
@@ -2407,31 +2901,44 @@ def build_parser() -> argparse.ArgumentParser:
     _add_source_arguments(ups_parser)
     ups_parser.set_defaults(func=cmd_ups_health)
 
-    # 14. itsm (Phase 6)
+    # 15. itsm (Phase 6)
     itsm_parser = subparsers.add_parser(
         "itsm",
+        aliases=["itsm-sync"],
         help="Generate, approve, serialize, and verify ServiceNow/Jira/Webhook ITSM change tickets.",
     )
     itsm_parser.add_argument(
         "--output-dir",
         type=Path,
-        default=Path("./output"),
-        help="Directory to write ITSM ticket sink and provider payload files (default: ./output).",
+        default=Path("./reports"),
+        help="Directory to write ITSM ticket sink and provider payload files (default: ./reports).",
     )
     itsm_parser.add_argument(
+        "--output",
+        type=Path,
+        default=None,
+        help="Optional explicit file path for the generated or updated ticket JSON.",
+    )
+    itsm_parser.add_argument(
+        "--tickets-file",
         "--sink-file",
+        dest="sink_file",
         type=Path,
         default=None,
         help="Path to JsonFileItsmSink file (defaults to <output-dir>/itsm_tickets.json).",
     )
     itsm_parser.add_argument(
+        "--manifest",
         "--manifest-file",
+        dest="manifest_file",
         type=Path,
         default=None,
         help="Optional Phase 2 RemediationApprovalManifest JSON file to generate a quarantine change ticket.",
     )
     itsm_parser.add_argument(
+        "--port-plan",
         "--port-plan-file",
+        dest="port_plan_file",
         type=Path,
         default=None,
         help="Optional Phase 4 PortReclamationPlan JSON file to generate a port reclamation change ticket.",
@@ -2443,16 +2950,48 @@ def build_parser() -> argparse.ArgumentParser:
         help="Optional Phase 3 ReconciliationReport JSON file to generate a Shadow IT onboarding task.",
     )
     itsm_parser.add_argument(
+        "--ups-report",
         "--ups-health-file",
+        dest="ups_health_file",
         type=Path,
         default=None,
         help="Optional Phase 6 UpsFleetHealthReport JSON file to generate an APC UPS hardware incident ticket.",
+    )
+    itsm_parser.add_argument(
+        "--artifact",
+        dest="artifact_file",
+        type=Path,
+        default=None,
+        help="Optional generic artifact JSON file for ticket generation or verification.",
+    )
+    itsm_parser.add_argument(
+        "--workflow-type",
+        choices=[
+            "QUARANTINE_DECOMMISSION",
+            "PORT_RECLAMATION",
+            "SHADOW_IT_ONBOARDING",
+            "UPS_HARDWARE_INCIDENT",
+        ],
+        default=None,
+        help="Optional explicit workflow type when using --artifact.",
     )
     itsm_parser.add_argument(
         "--ticket-id",
         type=str,
         default=None,
         help="Optional explicit ticket ID when generating a ticket.",
+    )
+    itsm_parser.add_argument(
+        "--site-id",
+        type=str,
+        default=None,
+        help="Optional site ID override for ticket metadata.",
+    )
+    itsm_parser.add_argument(
+        "--cmdb-ci",
+        type=str,
+        default=None,
+        help="Optional CMDB Configuration Item override.",
     )
     itsm_parser.add_argument(
         "--provider",
@@ -2473,13 +3012,17 @@ def build_parser() -> argparse.ArgumentParser:
         help="Initial approval status for newly generated tickets (default: PENDING).",
     )
     itsm_parser.add_argument(
+        "--approve-ticket",
         "--approve-ticket-id",
+        dest="approve_ticket_id",
         type=str,
         default=None,
         help="Ticket ID in sink to transition to APPROVED.",
     )
     itsm_parser.add_argument(
+        "--reject-ticket",
         "--reject-ticket-id",
+        dest="reject_ticket_id",
         type=str,
         default=None,
         help="Ticket ID in sink to transition to REJECTED.",
@@ -2491,10 +3034,24 @@ def build_parser() -> argparse.ArgumentParser:
         help="Approver identifier recorded when approving/rejecting tickets (default: cab-approver).",
     )
     itsm_parser.add_argument(
+        "--approved-at",
+        type=str,
+        default=None,
+        help="Optional ISO-8601 UTC timestamp for approval/rejection.",
+    )
+    itsm_parser.add_argument(
+        "--verify-ticket",
         "--verify-ticket-id",
+        dest="verify_ticket_id",
         type=str,
         default=None,
         help="Ticket ID to verify via ItsmGateVerifier (exits non-zero if unapproved or SHA-256 mismatches).",
+    )
+    itsm_parser.add_argument(
+        "--allow-scheduled",
+        action="store_true",
+        default=False,
+        help="Allow SCHEDULED status when verifying a ticket via --verify-ticket.",
     )
     itsm_parser.add_argument(
         "--expected-sha256",

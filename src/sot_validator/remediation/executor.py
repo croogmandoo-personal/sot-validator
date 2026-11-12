@@ -1149,6 +1149,7 @@ class RemediationExecutor:
         itsm_verifier: Optional[Any] = None,
         itsm_ticket_id: Optional[str] = None,
         itsm_ticket: Optional[Any] = None,
+        allow_scheduled_ticket: bool = False,
     ) -> None:
         if not isinstance(dry_run, bool):
             raise RemediationExecutionError("dry_run must be a boolean")
@@ -1167,6 +1168,7 @@ class RemediationExecutor:
         self.itsm_verifier = itsm_verifier
         self.itsm_ticket_id = itsm_ticket_id
         self.itsm_ticket = itsm_ticket
+        self.allow_scheduled_ticket = bool(allow_scheduled_ticket)
 
         resolved_journal_arg = journal if journal is not None else journal_path
         if isinstance(resolved_journal_arg, RollbackJournal):
@@ -1203,6 +1205,7 @@ class RemediationExecutor:
         itsm_verifier: Optional[Any] = None,
         itsm_ticket_id: Optional[str] = None,
         itsm_ticket: Optional[Any] = None,
+        allow_scheduled_ticket: Optional[bool] = None,
     ) -> RemediationExecutionResult:
         """Execute an operator-approved RemediationApprovalManifest after gate verification."""
         effective_dry_run = self.dry_run if dry_run is None else dry_run
@@ -1222,6 +1225,11 @@ class RemediationExecutor:
         )
         effective_itsm_verifier = (
             itsm_verifier if itsm_verifier is not None else self.itsm_verifier
+        )
+        effective_allow_scheduled = (
+            self.allow_scheduled_ticket
+            if allow_scheduled_ticket is None
+            else bool(allow_scheduled_ticket)
         )
         effective_ticket_ref = (
             itsm_ticket
@@ -1255,20 +1263,20 @@ class RemediationExecutor:
         ):
             from sot_validator.itsm.tickets import ItsmGateVerifier
 
-            if effective_ticket_ref is None:
-                raise RemediationExecutionError(
-                    "ITSM approval gate requires an itsm_ticket or itsm_ticket_id when require_itsm_approval=True"
-                )
             verifier = (
                 effective_itsm_verifier
                 if isinstance(effective_itsm_verifier, ItsmGateVerifier)
-                else ItsmGateVerifier(sink=effective_itsm_sink)
+                else ItsmGateVerifier(
+                    sink=effective_itsm_sink,
+                    allow_scheduled=effective_allow_scheduled,
+                )
             )
             verifier.require_change_ticket_approved(
                 effective_ticket_ref,
                 expected_sha256=manifest.manifest_sha256,
                 manifest=manifest,
                 sink=effective_itsm_sink,
+                allow_scheduled=effective_allow_scheduled,
             )
 
         resolved_exec_id = (
