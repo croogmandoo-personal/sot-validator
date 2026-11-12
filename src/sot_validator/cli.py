@@ -2048,8 +2048,15 @@ def _open_curation_store(
 def _load_json_object_list(path: Path, *, key: str) -> list[Mapping[str, Any]]:
     """Load a JSON list of objects from a bare list or a ``{"<key>": [...]}`` envelope."""
     raw = json.loads(Path(path).read_text(encoding="utf-8"))
+    return _json_object_list(raw, key=key, path=path)
+
+
+def _json_object_list(raw: Any, *, key: str, path: Path) -> list[Mapping[str, Any]]:
+    """Validate parsed JSON as a bare list of objects or a ``{"<key>": [...]}`` envelope."""
     if isinstance(raw, Mapping):
-        items: Any = raw.get(key, [])
+        if key not in raw:
+            raise ValueError(f"Expected a JSON list or a {key!r} key in {path}")
+        items: Any = raw[key]
     elif isinstance(raw, Sequence) and not isinstance(raw, (str, bytes)):
         items = raw
     else:
@@ -2366,13 +2373,15 @@ def cmd_discover(args: argparse.Namespace) -> int:
         arp_path = Path(args.router_arp)
         arp_text = arp_path.read_text(encoding="utf-8")
         try:
-            json.loads(arp_text)
+            arp_raw = json.loads(arp_text)
         except json.JSONDecodeError:
             arp_records = RouterTableParsers.parse_cli_arp(arp_text)
         else:
             arp_records = [
                 RouterArpRecord.from_dict(item)
-                for item in _load_json_object_list(arp_path, key="arp_records")
+                for item in _json_object_list(
+                    arp_raw, key="arp_records", path=arp_path
+                )
             ]
 
     dhcp_leases = None

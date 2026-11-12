@@ -195,7 +195,10 @@ def test_fingerprint_cli_writes_json_and_markdown_reports(tmp_path: Path) -> Non
     markdown = md_out.read_text(encoding="utf-8")
     assert markdown.startswith("# Service Fingerprint Report:")
     assert "Extreme Networks" in markdown
-    assert "| IP | Vendor | Model | OS Family | Hostname | Role | Template | Confidence | Signatures |" in markdown
+    assert (
+        "| IP | Vendor | Model | OS Family | Hostname | Role | Template"
+        " | Confidence | Signatures |"
+    ) in markdown
     assert "## Enriched Devices" in markdown
     assert "## Enriched Equipment\n\nNone." in markdown
 
@@ -215,6 +218,62 @@ def test_fingerprint_cli_prints_json_without_output(
     assert report["banner_count"] == 0
     assert report["fingerprints"] == []
     assert report["enriched_devices"] == []
+
+
+
+def test_json_inputs_reject_misspelled_envelope_key(tmp_path: Path) -> None:
+    snapshot = _write_site(tmp_path / "site.json", _build_site(with_server=False))
+    banners_path = tmp_path / "banners.json"
+    banners_path.write_text(
+        json.dumps({"banner": [{"ip": "10.42.1.2", "ssh_banner": "ExtremeXOS"}]}),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="'banners'"):
+        main(
+            ["fingerprint", "--snapshot", str(snapshot), "--banners", str(banners_path)]
+        )
+
+    fdb_path = tmp_path / "fdb.json"
+    fdb_path.write_text(json.dumps({"entry": []}), encoding="utf-8")
+    with pytest.raises(ValueError, match="'entries'"):
+        main(["map-ports", "--snapshot", str(snapshot), "--fdb-file", str(fdb_path)])
+
+    alert_file = tmp_path / "alerts.json"
+    alert_file.write_text(json.dumps({"target": []}), encoding="utf-8")
+    with pytest.raises(ValueError, match="'targets'"):
+        main(
+            [
+                "diff-scans",
+                "--baseline",
+                str(snapshot),
+                "--current",
+                str(snapshot),
+                "--output-json",
+                str(tmp_path / "drift.json"),
+                "--alert-file",
+                str(alert_file),
+            ]
+        )
+
+    mock_config = tmp_path / "mock.json"
+    mock_config.write_text(json.dumps({"ping": {"10.42.1.1": 0.4}}), encoding="utf-8")
+    router_arp = tmp_path / "router_arp.json"
+    router_arp.write_text(json.dumps({"arp_record": []}), encoding="utf-8")
+    with pytest.raises(ValueError, match="'arp_records'"):
+        main(
+            [
+                "discover",
+                "--cidr",
+                "10.42.0.0/16",
+                "--mock-config",
+                str(mock_config),
+                "--router-arp",
+                str(router_arp),
+                "--output",
+                str(tmp_path / "discovered.json"),
+            ]
+        )
 
 
 EXOS_FDB_TEXT = f"""
@@ -555,6 +614,15 @@ def test_discover_proxmox_enrichment_only_fills_unambiguous_running_matches(
             **extra,
         }
 
+    def _guest(vmid: int, name: str, **extra: object) -> dict[str, object]:
+        return {
+            "vmid": vmid,
+            "name": name,
+            "guest_type": "qemu",
+            "node": "pve-01",
+            **extra,
+        }
+
     mock_config = tmp_path / "mock.json"
     mock_config.write_text(
         json.dumps(
@@ -582,14 +650,30 @@ def test_discover_proxmox_enrichment_only_fills_unambiguous_running_matches(
         ProxmoxClusterSnapshot.from_dict(
             {
                 "guests": [
-                    {"vmid": 180, "name": "pve-guest-80", "guest_type": "qemu", "node": "pve-01", "ip_addresses": ["10.42.1.80"]},
-                    {"vmid": 181, "name": "stopped-81", "guest_type": "qemu", "node": "pve-01", "status": "stopped", "ip_addresses": ["10.42.1.81"]},
-                    {"vmid": 182, "name": "dup-a", "guest_type": "qemu", "node": "pve-01", "ip_addresses": ["10.42.1.82"]},
-                    {"vmid": 183, "name": "dup-b", "guest_type": "lxc", "node": "pve-02", "ip_addresses": ["10.42.1.82"]},
-                    {"vmid": 184, "name": "mac-only-83", "guest_type": "qemu", "node": "pve-01", "mac_addresses": ["bc:24:11:00:00:83"]},
+                    _guest(180, "pve-guest-80", ip_addresses=["10.42.1.80"]),
+                    _guest(
+                        181,
+                        "stopped-81",
+                        status="stopped",
+                        ip_addresses=["10.42.1.81"],
+                    ),
+                    _guest(182, "dup-a", ip_addresses=["10.42.1.82"]),
+                    _guest(
+                        183,
+                        "dup-b",
+                        guest_type="lxc",
+                        node="pve-02",
+                        ip_addresses=["10.42.1.82"],
+                    ),
+                    _guest(184, "mac-only-83", mac_addresses=["bc:24:11:00:00:83"]),
                 ],
                 "containers": [
-                    {"container_id": "abc123", "name": "portainer-84", "image": "portainer/portainer-ce", "ip_addresses": ["10.42.1.84"]},
+                    {
+                        "container_id": "abc123",
+                        "name": "portainer-84",
+                        "image": "portainer/portainer-ce",
+                        "ip_addresses": ["10.42.1.84"],
+                    },
                 ],
             }
         ).to_json(indent=2),
