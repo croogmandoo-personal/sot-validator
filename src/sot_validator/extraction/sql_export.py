@@ -9,6 +9,7 @@ from pathlib import Path
 import re
 import sqlite3
 from typing import Any, Mapping, Optional, Sequence
+from urllib.parse import quote
 
 from sot_validator.extraction.client import ReadOnlyViolationError, SoTClient
 from sot_validator.models import (
@@ -158,6 +159,35 @@ def _normalize_category(raw_category: Any) -> EquipmentCategory:
     return mapping.get(lowered, EquipmentCategory.OTHER)
 
 
+_SQLITE_HEADER = b"SQLite format 3\x00"
+
+
+def _deny_attach_detach(action: int, *_args: Any) -> int:
+    if action in (sqlite3.SQLITE_ATTACH, sqlite3.SQLITE_DETACH):
+        return sqlite3.SQLITE_DENY
+    return sqlite3.SQLITE_OK
+
+
+def open_read_only_sqlite(path: Path | str) -> sqlite3.Connection:
+    """Open an on-disk SQLite export read-only (mode=ro, query_only, no ATTACH/DETACH)."""
+    uri_path = quote(str(Path(path).resolve()))
+    conn = sqlite3.connect(f"file:{uri_path}?mode=ro", uri=True)
+    try:
+        conn.execute("PRAGMA query_only = ON")
+        conn.set_authorizer(_deny_attach_detach)
+    except Exception:
+        conn.close()
+        raise
+    return conn
+
+
+def _is_sqlite_file(path: Path) -> bool:
+    if not path.is_file():
+        return False
+    with path.open("rb") as handle:
+        return handle.read(len(_SQLITE_HEADER)) == _SQLITE_HEADER
+
+
 def _is_existing_path(candidate: Path | str) -> Optional[Path]:
     if isinstance(candidate, Path):
         return candidate if candidate.exists() else None
@@ -241,6 +271,8 @@ class SqlExportSoTClient(SoTClient):
     @classmethod
     def _load_from_sql_dump(cls, sql_source: Path | str) -> dict[str, Site]:
         existing = _is_existing_path(sql_source)
+        if existing is not None and _is_sqlite_file(existing):
+            return cls._load_from_sqlite_file(existing)
         if existing is not None:
             sql_text = existing.read_text(encoding="utf-8")
         elif isinstance(sql_source, Path):
@@ -285,6 +317,25 @@ class SqlExportSoTClient(SoTClient):
             tables: dict[str, list[dict[str, Any]]] = {}
             for tname in table_names:
                 rows = conn.execute(f'SELECT * FROM "{tname}"').fetchall()
+                tables[tname.lower()] = [dict(r) for r in rows]
+        finally:
+            conn.close()
+
+        return cls._build_sites_from_tables(tables)
+
+    @classmethod
+    def _load_from_sqlite_file(cls, db_path: Path) -> dict[str, Site]:
+        conn = open_read_only_sqlite(db_path)
+        conn.row_factory = sqlite3.Row
+        try:
+            cursor = conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            )
+            table_names = [row["name"] for row in cursor.fetchall()]
+            tables: dict[str, list[dict[str, Any]]] = {}
+            for tname in table_names:
+                quoted = tname.replace('"', '""')
+                rows = conn.execute(f'SELECT * FROM "{quoted}"').fetchall()
                 tables[tname.lower()] = [dict(r) for r in rows]
         finally:
             conn.close()
