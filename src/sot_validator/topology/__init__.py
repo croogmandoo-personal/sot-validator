@@ -11,6 +11,13 @@ from sot_validator.topology.device_types import (
     VALID_DEVICE_ROLES,
     normalize_mac_address,
 )
+from sot_validator.topology.fdb_mapper import (
+    FdbEntry,
+    FdbTableParser,
+    PortClassificationResult,
+    SwitchFdbPortMapper,
+    VALID_PORT_MODES,
+)
 from sot_validator.topology.graph import (
     TopologyEdge,
     TopologyGraph,
@@ -34,11 +41,15 @@ __all__ = [
     "DevicePortManager",
     "DeviceTypeCatalog",
     "DeviceTypeTemplate",
+    "FdbEntry",
+    "FdbTableParser",
     "HostIdentification",
     "KNOWN_OUI_VENDORS",
     "KNOWN_SCAN_TCP_PORTS",
     "NetworkRoleIdentifier",
+    "PortClassificationResult",
     "PortSpec",
+    "SwitchFdbPortMapper",
     "TopologyEdge",
     "TopologyGraph",
     "TopologyGraphBuilder",
@@ -47,5 +58,6 @@ __all__ = [
     "VALID_EDGE_RELATIONS",
     "VALID_HOST_ROLES",
     "VALID_NODE_TYPES",
+    "VALID_PORT_MODES",
     "normalize_mac_address",
 ]

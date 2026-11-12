@@ -1,5 +1,28 @@
 """Scoped /16-to-/24 subnet discovery and Site snapshot bootstrapper package."""
 
+from sot_validator.discovery.fingerprinter import (
+    HTTP_BANNER_PORTS,
+    SSH_BANNER_PORTS,
+    TLS_BANNER_PORTS,
+    DeviceFingerprint,
+    RawServiceBanner,
+    ServiceBannerFingerprinter,
+)
+from sot_validator.discovery.monitor import (
+    DriftAlertDispatcher,
+    DriftAlertTarget,
+    DriftDispatchResult,
+    ScanDriftEvent,
+    ScanDriftEventType,
+    SnapshotDiffEngine,
+    SnapshotDiffReport,
+)
+from sot_validator.discovery.router_tables import (
+    DhcpLeaseRecord,
+    RouterArpDhcpCollector,
+    RouterArpRecord,
+    RouterTableParsers,
+)
 from sot_validator.discovery.scanner import (
     DEFAULT_GATEWAY_OCTETS,
     DEFAULT_TCP_PORTS,
@@ -12,8 +35,25 @@ from sot_validator.discovery.scanner import (
 __all__ = [
     "DEFAULT_GATEWAY_OCTETS",
     "DEFAULT_TCP_PORTS",
+    "DeviceFingerprint",
+    "DhcpLeaseRecord",
     "DiscoveredHost",
     "DiscoveryConfig",
+    "DriftAlertDispatcher",
+    "DriftAlertTarget",
+    "DriftDispatchResult",
+    "HTTP_BANNER_PORTS",
+    "RawServiceBanner",
+    "RouterArpDhcpCollector",
+    "RouterArpRecord",
+    "RouterTableParsers",
+    "SSH_BANNER_PORTS",
+    "ScanDriftEvent",
+    "ScanDriftEventType",
+    "ServiceBannerFingerprinter",
+    "SnapshotDiffEngine",
+    "SnapshotDiffReport",
     "SubnetDiscoveryScanner",
+    "TLS_BANNER_PORTS",
     "parse_ip_neigh_output",
 ]
