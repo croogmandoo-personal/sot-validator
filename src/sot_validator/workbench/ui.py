@@ -1637,6 +1637,49 @@ th {{ background: var(--panel-alt); font-weight: 600; }}
 <script>
 let WORKBENCH_STATE = JSON.parse(document.getElementById('initial-workbench-state').textContent);
 
+const WORKBENCH_TOKEN_KEY = 'sot-validator-workbench-token';
+
+function workbenchToken() {{
+  try {{
+    return window.sessionStorage.getItem(WORKBENCH_TOKEN_KEY) || '';
+  }} catch (err) {{
+    return '';
+  }}
+}}
+
+function loadWorkbenchToken() {{
+  try {{
+    const hash = window.location.hash || '';
+    if (hash.length > 1) {{
+      const fragmentToken = new URLSearchParams(hash.slice(1)).get('token');
+      if (fragmentToken) {{
+        window.sessionStorage.setItem(WORKBENCH_TOKEN_KEY, fragmentToken);
+        if (window.history && window.history.replaceState) {{
+          window.history.replaceState(
+            null, '', window.location.pathname + window.location.search
+          );
+        }}
+        return fragmentToken;
+      }}
+    }}
+  }} catch (err) {{
+    return '';
+  }}
+  return workbenchToken();
+}}
+
+loadWorkbenchToken();
+
+function authFailureMessage(status) {{
+  if (status === 401 || status === 403) {{
+    return 'Write rejected: reload this page with #token=<token> to authenticate.';
+  }}
+  if (status === 413) {{
+    return 'Request too large: shorten the form and try again.';
+  }}
+  return '';
+}}
+
 function escapeHtml(val) {{
   if (val === null || val === undefined) return '';
   return String(val)
@@ -1918,7 +1961,7 @@ async function submitItemPatch(ev) {{
   }};
   const resp = await fetch('/api/items/patch', {{
     method: 'POST',
-    headers: {{ 'Content-Type': 'application/json' }},
+    headers: {{ 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + workbenchToken() }},
     body: JSON.stringify(payload)
   }});
   const data = await resp.json();
@@ -1927,7 +1970,7 @@ async function submitItemPatch(ev) {{
     renderState(data.state);
     showBanner('Saved item patch for ' + targetType + ' ' + targetId, false);
   }} else {{
-    showBanner(data.error || 'Failed to save patch', true);
+    showBanner(authFailureMessage(resp.status) || data.error || 'Failed to save patch', true);
   }}
 }}
 
@@ -1936,7 +1979,7 @@ async function submitDeleteCurrentItem() {{
   const targetId = document.getElementById('edit-target-id').value;
   const resp = await fetch('/api/items/patch', {{
     method: 'POST',
-    headers: {{ 'Content-Type': 'application/json' }},
+    headers: {{ 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + workbenchToken() }},
     body: JSON.stringify({{
       target_type: targetType,
       target_id: targetId,
@@ -1950,7 +1993,7 @@ async function submitDeleteCurrentItem() {{
     renderState(data.state);
     showBanner('Deleted ' + targetType + ' ' + targetId, false);
   }} else {{
-    showBanner(data.error || 'Failed to delete item', true);
+    showBanner(authFailureMessage(resp.status) || data.error || 'Failed to delete item', true);
   }}
 }}
 
@@ -1968,7 +2011,7 @@ async function submitCreateDevice(ev) {{
   }};
   const resp = await fetch('/api/devices', {{
     method: 'POST',
-    headers: {{ 'Content-Type': 'application/json' }},
+    headers: {{ 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + workbenchToken() }},
     body: JSON.stringify(payload)
   }});
   const data = await resp.json();
@@ -1977,7 +2020,7 @@ async function submitCreateDevice(ev) {{
     renderState(data.state);
     showBanner('Created device ' + data.device.hostname, false);
   }} else {{
-    showBanner(data.error || 'Failed to create device', true);
+    showBanner(authFailureMessage(resp.status) || data.error || 'Failed to create device', true);
   }}
 }}
 
@@ -1997,7 +2040,7 @@ async function submitPortManager(ev) {{
   }};
   const resp = await fetch('/api/devices/ports', {{
     method: 'POST',
-    headers: {{ 'Content-Type': 'application/json' }},
+    headers: {{ 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + workbenchToken() }},
     body: JSON.stringify(payload)
   }});
   const data = await resp.json();
@@ -2005,7 +2048,7 @@ async function submitPortManager(ev) {{
     renderState(data.state);
     showBanner('Updated ' + (data.ports ? data.ports.length : 0) + ' port(s)', false);
   }} else {{
-    showBanner(data.error || 'Failed to update ports', true);
+    showBanner(authFailureMessage(resp.status) || data.error || 'Failed to update ports', true);
   }}
 }}
 
@@ -2021,7 +2064,7 @@ async function submitVlanForm(ev) {{
   }};
   const resp = await fetch('/api/vlans', {{
     method: 'POST',
-    headers: {{ 'Content-Type': 'application/json' }},
+    headers: {{ 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + workbenchToken() }},
     body: JSON.stringify(payload)
   }});
   const data = await resp.json();
@@ -2030,7 +2073,7 @@ async function submitVlanForm(ev) {{
     renderState(data.state);
     showBanner('Saved VLAN ' + data.vlan.vlan_id, false);
   }} else {{
-    showBanner(data.error || 'Failed to save VLAN', true);
+    showBanner(authFailureMessage(resp.status) || data.error || 'Failed to save VLAN', true);
   }}
 }}
 {v2_script}
