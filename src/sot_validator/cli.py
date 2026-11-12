@@ -2215,6 +2215,14 @@ def _enrich_discovered_site_with_identifier(
     ]
     identifications = identifier.identify_hosts(observations)
     ident_by_ip = {ident.ip: ident for ident in identifications}
+    consolidated_routers = identifier.consolidate_multi_vlan_routers(
+        identifications
+    )
+    router_by_ip = {
+        gw_ip: rtr
+        for rtr in consolidated_routers
+        for gw_ip in rtr.gateway_ips
+    }
 
     inferred_vlans, inferred_subnets = identifier.infer_vlans_and_subnets(
         identifications, site_id=site.site_id
@@ -2243,9 +2251,15 @@ def _enrich_discovered_site_with_identifier(
             ident = ident_by_ip[dev.management_ip]
             if ident.vendor and not dev.vendor:
                 dev.vendor = ident.vendor
-            if ident.suggested_template_id and not dev.model:
+            rtr = router_by_ip.get(dev.management_ip)
+            tpl_id = (
+                rtr.suggested_template_id
+                if rtr is not None and rtr.suggested_template_id
+                else ident.suggested_template_id
+            )
+            if tpl_id and not dev.model:
                 try:
-                    tpl = catalog.get(ident.suggested_template_id)
+                    tpl = catalog.get(tpl_id)
                     dev.model = tpl.model
                     if not dev.vendor:
                         dev.vendor = tpl.vendor
@@ -2516,9 +2530,13 @@ def cmd_curate(args: argparse.Namespace) -> int:
         reason = getattr(args, "reason", None) or ""
 
         # 1. Item patch or delete
-        if getattr(args, "target_type", None) and getattr(
-            args, "target_id", None
-        ):
+        has_target_type = bool(getattr(args, "target_type", None))
+        has_target_id = bool(getattr(args, "target_id", None))
+        if has_target_type != has_target_id:
+            raise ValueError(
+                "Both --target-type and --target-id must be provided together"
+            )
+        if has_target_type and has_target_id:
             if getattr(args, "delete", False):
                 store.delete_item(
                     args.target_type,

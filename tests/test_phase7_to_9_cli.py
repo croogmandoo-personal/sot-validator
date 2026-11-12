@@ -353,3 +353,40 @@ def test_cli_discover_with_fixtures_flag_offline(tmp_path: Path) -> None:
     assert site.site_id == "site-099"
     assert len(site.devices) >= 1
     assert len(site.equipment) >= 1
+
+
+def test_agents_md_documents_phases_7_to_9_packages_and_cli() -> None:
+    repo_root = Path(__file__).resolve().parent.parent
+    agents_md = (repo_root / "AGENTS.md").read_text(encoding="utf-8")
+
+    for pkg in ("discovery/", "curation/", "topology/", "workbench/"):
+        assert pkg in agents_md, f"Missing {pkg} in AGENTS.md"
+
+    for subcommand in ("discover", "serve", "curate", "topology"):
+        assert f"`{subcommand}`" in agents_md or subcommand in agents_md, (
+            f"Missing {subcommand} in AGENTS.md"
+        )
+    assert "sot-validator serve --port" in agents_md
+
+
+def test_cli_curate_rejects_partial_target_flags(tmp_path: Path) -> None:
+    import pytest
+
+    curation_db_path = tmp_path / "curation_err.db"
+    with pytest.raises(
+        ValueError,
+        match="Both --target-type and --target-id must be provided together",
+    ):
+        main(
+            [
+                "curate",
+                "--curation-db",
+                str(curation_db_path),
+                "--target-type",
+                "Equipment",
+                "--name",
+                "Missing Target ID",
+            ]
+        )
+
+
