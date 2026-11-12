@@ -76,10 +76,10 @@ _PAREN_VLAN_PATTERN = re.compile(r"\((\d{1,4})\)")
 _VLAN_SUFFIX_PATTERN = re.compile(r"(?:vlan|vl)[_\-]?(\d{1,4})$", re.IGNORECASE)
 _VOSS_PORT_PREFIX_PATTERN = re.compile(r"^port[\-_]?(\d+/\d+(?:/\d+)?)$", re.IGNORECASE)
 _QBRIDGE_FDB_OID_PATTERN = re.compile(
-    r"^(?:1\.3\.6\.1\.2\.1\.17\.7\.1\.2\.2\.1\.2|dot1qTpFdbPort)\.(\d+)\.(\d+)\.(\d+)\.(\d+)\.(\d+)\.(\d+)\.(\d+)$"
+    r"^\.?(?:1\.3\.6\.1\.2\.1\.17\.7\.1\.2\.2\.1\.2|dot1qTpFdbPort)\.(\d+)\.(\d+)\.(\d+)\.(\d+)\.(\d+)\.(\d+)\.(\d+)$"
 )
 _BRIDGE_FDB_OID_PATTERN = re.compile(
-    r"^(?:1\.3\.6\.1\.2\.1\.17\.4\.3\.1\.2|dot1dTpFdbPort)\.(\d+)\.(\d+)\.(\d+)\.(\d+)\.(\d+)\.(\d+)$"
+    r"^\.?(?:1\.3\.6\.1\.2\.1\.17\.4\.3\.1\.2|dot1dTpFdbPort)\.(\d+)\.(\d+)\.(\d+)\.(\d+)\.(\d+)\.(\d+)$"
 )
 _HOSTNAME_TRAILING_DIGITS_PATTERN = re.compile(r"\d+$")
 

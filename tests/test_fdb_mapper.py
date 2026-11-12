@@ -787,3 +787,29 @@ def test_fdb_table_parser_string_static_flags_and_unrelated_oids() -> None:
     )
     assert len(oid_entries) == 1
     assert oid_entries[0].mac_address == "00:c0:b7:11:22:33"
+
+
+def test_fdb_table_parser_qbridge_mib_leading_dot_oids() -> None:
+    # Net-SNMP `snmpwalk -On` prints numeric OIDs with a leading dot
+    oid_entries = FdbTableParser().parse_qbridge_mib(
+        {
+            ".1.3.6.1.2.1.17.7.1.2.2.1.2.10.0.192.183.17.34.51": 5,
+            ".1.3.6.1.2.1.17.4.3.1.2.188.36.17.170.187.1": 1,
+        },
+        device_id="sw-01",
+        port_index_map={1: "1:1", 5: "1:5"},
+    )
+    assert oid_entries == [
+        FdbEntry(
+            device_id="sw-01",
+            port_name="1:5",
+            mac_address="00:c0:b7:11:22:33",
+            vlan_id="10",
+        ),
+        FdbEntry(
+            device_id="sw-01",
+            port_name="1:1",
+            mac_address="bc:24:11:aa:bb:01",
+            vlan_id=None,
+        ),
+    ]
