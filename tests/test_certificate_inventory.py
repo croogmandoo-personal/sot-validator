@@ -175,6 +175,20 @@ def test_self_signed_variants(issuer):
     ]
 
 
+def test_self_signed_cn_parsing_by_dn_style():
+    # RFC 4514 DNs may carry "/" inside a CN; OpenSSL oneline DNs may carry ",".
+    assert _single(_record(issuer="CN=web/admin, O=X", subject_cn="web/admin")).issues == [
+        ISSUE_SELF_SIGNED
+    ]
+    assert _single(_record(issuer="/O=X/CN=Corp, Inc", subject_cn="Corp, Inc")).issues == [
+        ISSUE_SELF_SIGNED
+    ]
+    # An unescaped "+" starts a new attribute of a multi-valued RDN.
+    assert _single(_record(issuer="CN=sw01+OU=Net, O=X", subject_cn="sw01")).issues == [
+        ISSUE_SELF_SIGNED
+    ]
+
+
 @pytest.mark.parametrize(
     "issuer", ["CN=Corp Issuing CA, O=X", "O=sw01.corp.local", "XCN=sw01.corp.local"]
 )
@@ -512,6 +526,18 @@ def test_reports_are_order_independent_and_repeatable():
     assert md_a == md_b == generate_certificate_markdown_report(shuffled, generated_at=GENERATED_AT)
     reported = [(f["site_id"], f["ip"], f["port"]) for f in json.loads(json_a)["findings"]]
     assert reported == EXPECTED_ORDER
+
+
+def test_same_endpoint_findings_have_a_total_order():
+    a = _record(signature_algorithm="SHA-1", subject_cn="a")
+    b = _record(key_type="RSA", key_bits=1024, subject_cn="a")
+    c = _record(signature_algorithm="SHA-1", issuer="CN=Corp CA", subject_cn="a")
+    findings = _evaluate(a, b, c)
+    assert _evaluate(c, b, a) == findings
+    for report in (generate_certificate_json_report, generate_certificate_markdown_report):
+        forward = report(findings, generated_at=GENERATED_AT)
+        assert report(list(reversed(findings)), generated_at=GENERATED_AT) == forward
+        assert report([findings[1], findings[2], findings[0]], generated_at=GENERATED_AT) == forward
 
 
 # --- JSON report --------------------------------------------------------------

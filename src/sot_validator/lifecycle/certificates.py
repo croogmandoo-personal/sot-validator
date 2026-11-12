@@ -30,8 +30,10 @@ WARNING_DAYS_THRESHOLD = 30
 MIN_RSA_KEY_BITS = 2048
 SHA1_WITH_RSA_OID = "1.2.840.113549.1.1.5"
 
-# The CN attribute of an RFC 4514 (comma/semicolon/plus) or OpenSSL oneline (slash) DN.
-_ISSUER_CN_PATTERN = re.compile(r"(?:^|[,;+/])\s*CN\s*=\s*([^,;+/]*)", re.IGNORECASE)
+# The CN attribute of an RFC 4514 DN, where `,`, `;` and `+` separate attributes.
+_ISSUER_CN_PATTERN = re.compile(r"(?:^|[,;+])\s*CN\s*=\s*([^,;+]*)", re.IGNORECASE)
+# The CN attribute of an OpenSSL oneline DN ("/C=US/CN=name"), where only `/` separates.
+_ONELINE_ISSUER_CN_PATTERN = re.compile(r"/\s*CN\s*=\s*([^/]*)", re.IGNORECASE)
 
 
 def expiring_issue(days: int) -> str:
@@ -192,7 +194,10 @@ def _normalize_warn_days(warn_days: Iterable[int]) -> tuple[int, ...]:
 
 
 def _issuer_common_name(issuer: str) -> str:
-    match = _ISSUER_CN_PATTERN.search(issuer)
+    pattern = (
+        _ONELINE_ISSUER_CN_PATTERN if issuer.lstrip().startswith("/") else _ISSUER_CN_PATTERN
+    )
+    match = pattern.search(issuer)
     if match is not None:
         return match.group(1)
     return issuer
@@ -240,7 +245,11 @@ def _ip_sort_key(ip: str) -> tuple[int, int]:
 
 
 def sort_findings(findings: Iterable[CertificateFinding]) -> list[CertificateFinding]:
-    """Sort by days remaining (unknown last), then site, numeric IP and port."""
+    """Sort by days remaining (unknown last), then site, numeric IP and port.
+
+    The remaining fields break ties between findings on the same endpoint so the
+    order never depends on the input order.
+    """
     return sorted(
         findings,
         key=lambda f: (
@@ -249,6 +258,11 @@ def sort_findings(findings: Iterable[CertificateFinding]) -> list[CertificateFin
             f.site_id,
             _ip_sort_key(f.ip),
             f.port,
+            f.severity,
+            tuple(f.issues),
+            f.subject_cn or "",
+            f.issuer or "",
+            f.not_after.isoformat() if f.not_after else "",
         ),
     )
 
