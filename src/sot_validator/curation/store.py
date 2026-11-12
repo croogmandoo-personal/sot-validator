@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
+import hashlib
 import json
 from pathlib import Path
+import re
 import sqlite3
 from typing import Any, Optional
 import uuid
@@ -49,6 +52,19 @@ VALID_TARGET_TYPES: tuple[str, ...] = (
     "Equipment",
 )
 
+GENESIS_HASH: str = "0" * 64
+
+# Reserved target type accepted only by AuditLogEntry, for chain migration markers.
+_AUDIT_LOG_TARGET_TYPE = "AuditLog"
+
+_HASH_PATTERN = re.compile(r"[0-9a-f]{64}")
+
+_MIGRATION_REASON = (
+    "Audit entries before this marker were recorded before hash chaining and were "
+    "chained retroactively during migration; their integrity before migration is "
+    "not attested."
+)
+
 
 def _normalize_target_type(value: Any, field_name: str = "target_type") -> str:
     raw = _require_non_empty_str(value, field_name).strip()
@@ -58,6 +74,14 @@ def _normalize_target_type(value: Any, field_name: str = "target_type") -> str:
             f"Invalid {field_name}: {value!r}. Expected one of {VALID_TARGET_TYPES}"
         )
     return canonical
+
+
+def _normalize_optional_hash(value: Any, field_name: str) -> Optional[str]:
+    if value is None:
+        return None
+    if not isinstance(value, str) or _HASH_PATTERN.fullmatch(value) is None:
+        raise ValueError(f"{field_name} must be 64 lowercase hex characters or None")
+    return value
 
 
 def _normalize_optional_str(value: Optional[str], field_name: str) -> Optional[str]:
@@ -249,6 +273,8 @@ class AuditLogEntry:
     changes: dict[str, Any] = field(default_factory=dict)
     reason: str = ""
     site_id: Optional[str] = None
+    prev_hash: Optional[str] = None
+    entry_hash: Optional[str] = None
 
     def __post_init__(self) -> None:
         resolved_entry_id = (
@@ -271,7 +297,12 @@ class AuditLogEntry:
         clean_action = _require_non_empty_str(self.action, "action").strip()
         object.__setattr__(self, "action", clean_action)
 
-        norm_target_type = _normalize_target_type(self.target_type, "target_type")
+        raw_target_type = _require_non_empty_str(self.target_type, "target_type").strip()
+        norm_target_type = (
+            _AUDIT_LOG_TARGET_TYPE
+            if raw_target_type.lower() == _AUDIT_LOG_TARGET_TYPE.lower()
+            else _normalize_target_type(raw_target_type, "target_type")
+        )
         object.__setattr__(self, "target_type", norm_target_type)
 
         clean_target_id = _require_non_empty_str(self.target_id, "target_id").strip()
@@ -294,6 +325,9 @@ class AuditLogEntry:
         norm_site_id = _normalize_optional_str(self.site_id, "site_id")
         object.__setattr__(self, "site_id", norm_site_id)
 
+        _normalize_optional_hash(self.prev_hash, "prev_hash")
+        _normalize_optional_hash(self.entry_hash, "entry_hash")
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "entry_id": self.entry_id,
@@ -305,6 +339,8 @@ class AuditLogEntry:
             "changes": dict(self.changes),
             "reason": self.reason,
             "site_id": self.site_id,
+            "prev_hash": self.prev_hash,
+            "entry_hash": self.entry_hash,
         }
 
     @classmethod
@@ -325,6 +361,8 @@ class AuditLogEntry:
             changes=dict(data.get("changes") or {}),
             reason=data.get("reason") or "",
             site_id=data.get("site_id"),
+            prev_hash=data.get("prev_hash"),
+            entry_hash=data.get("entry_hash"),
         )
 
     def to_json(self, *, indent: Optional[int] = None) -> str:
@@ -333,6 +371,41 @@ class AuditLogEntry:
     @classmethod
     def from_json(cls, raw: str) -> AuditLogEntry:
         return cls.from_dict(json.loads(raw))
+
+
+def _compute_entry_hash(entry: AuditLogEntry) -> str:
+    """Return SHA-256 of `prev_hash` followed by the canonical JSON of `entry` without `entry_hash`."""
+    if entry.prev_hash is None:
+        raise ValueError("prev_hash must be set to compute entry_hash")
+    payload = entry.to_dict()
+    del payload["entry_hash"]
+    canonical = json.dumps(
+        payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+    ).encode("utf-8")
+    return hashlib.sha256(entry.prev_hash.encode("ascii") + canonical).hexdigest()
+
+
+def _chain_entries(
+    entries: Sequence[AuditLogEntry], prev_hash: str = GENESIS_HASH
+) -> list[AuditLogEntry]:
+    """Return copies of `entries` hash-chained in order, starting from `prev_hash`."""
+    chained: list[AuditLogEntry] = []
+    for entry in entries:
+        linked = replace(entry, prev_hash=prev_hash, entry_hash=None)
+        linked = replace(linked, entry_hash=_compute_entry_hash(linked))
+        chained.append(linked)
+        prev_hash = linked.entry_hash
+    return chained
+
+
+@dataclass(frozen=True)
+class AuditChainReport:
+    """Result of walking the curation audit log hash chain."""
+
+    ok: bool
+    entries_checked: int
+    broken_index: Optional[int] = None
+    reason: Optional[str] = None
 
 
 class _HybridImportMethod:
@@ -450,10 +523,76 @@ class CurationStore:
                     target_id TEXT NOT NULL,
                     changes_json TEXT NOT NULL,
                     reason TEXT NOT NULL,
-                    site_id TEXT
+                    site_id TEXT,
+                    prev_hash TEXT,
+                    entry_hash TEXT
                 );
                 """
             )
+        self._migrate_legacy_audit_log()
+
+    def _audit_log_has_hash_columns(self) -> bool:
+        columns = {
+            str(row[1])
+            for row in self._conn.execute("PRAGMA table_info(audit_log)").fetchall()
+        }
+        return "prev_hash" in columns and "entry_hash" in columns
+
+    def _migrate_legacy_audit_log(self) -> None:
+        """Add hash columns to a legacy audit_log and chain its rows in place, once."""
+        if self._audit_log_has_hash_columns():
+            return
+        with self._write_transaction():
+            columns = {
+                str(row[1])
+                for row in self._conn.execute("PRAGMA table_info(audit_log)").fetchall()
+            }
+            if "prev_hash" in columns and "entry_hash" in columns:
+                return
+            for column in ("prev_hash", "entry_hash"):
+                if column not in columns:
+                    self._conn.execute(f"ALTER TABLE audit_log ADD COLUMN {column} TEXT")
+            rows = self._conn.execute(
+                "SELECT * FROM audit_log ORDER BY seq ASC"
+            ).fetchall()
+            legacy = [self._row_to_audit_entry(r) for r in rows]
+            chained = _chain_entries(legacy)
+            for row, entry in zip(rows, chained):
+                self._conn.execute(
+                    "UPDATE audit_log SET prev_hash = ?, entry_hash = ? WHERE seq = ? AND entry_hash IS NULL",
+                    (entry.prev_hash, entry.entry_hash, row["seq"]),
+                )
+            if chained:
+                self._record_migration_marker(chained, source="sqlite")
+
+    def _record_migration_marker(
+        self, chained_legacy: Sequence[AuditLogEntry], *, source: str
+    ) -> AuditLogEntry:
+        return self._record_audit(
+            actor="system",
+            action="migration",
+            target_type=_AUDIT_LOG_TARGET_TYPE,
+            target_id="audit_log",
+            changes={
+                "legacy_entries": len(chained_legacy),
+                "legacy_head_hash": chained_legacy[-1].entry_hash,
+                "source": source,
+            },
+            reason=_MIGRATION_REASON,
+            site_id=None,
+        )
+
+    @contextmanager
+    def _write_transaction(self) -> Iterator[sqlite3.Connection]:
+        """Run a block inside one `BEGIN IMMEDIATE` transaction on the current connection."""
+        conn = self._conn
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            yield conn
+            conn.commit()
+        except BaseException:
+            conn.rollback()
+            raise
 
     def close(self) -> None:
         """Close the underlying SQLite connection."""
@@ -469,6 +608,48 @@ class CurationStore:
         row = self._conn.execute("SELECT COUNT(*) AS cnt FROM audit_log").fetchone()
         seq = (int(row["cnt"]) if row is not None else 0) + 1
         return f"audit-{seq:04d}-{uuid.uuid4().hex[:8]}"
+
+    def _chain_head_hash(self) -> str:
+        row = self._conn.execute(
+            "SELECT entry_hash FROM audit_log ORDER BY seq DESC LIMIT 1"
+        ).fetchone()
+        if row is None:
+            return GENESIS_HASH
+        head = row["entry_hash"]
+        if head is None:
+            raise ValueError(
+                "audit_log head entry has no entry_hash; refusing to extend an unattested chain"
+            )
+        return str(head)
+
+    def export_chain_head(self) -> tuple[int, str]:
+        """Return `(entry_count, head_hash)` for the whole audit log, to be recorded as an external anchor."""
+        row = self._conn.execute("SELECT COUNT(*) AS cnt FROM audit_log").fetchone()
+        count = int(row["cnt"]) if row is not None else 0
+        return count, self._chain_head_hash()
+
+    def _insert_audit_entry(self, entry: AuditLogEntry) -> None:
+        self._conn.execute(
+            """
+            INSERT INTO audit_log (
+                entry_id, timestamp, actor, action, target_type, target_id,
+                changes_json, reason, site_id, prev_hash, entry_hash
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                entry.entry_id,
+                entry.timestamp.isoformat(),
+                entry.actor,
+                entry.action,
+                entry.target_type,
+                entry.target_id,
+                json.dumps(entry.changes),
+                entry.reason,
+                entry.site_id,
+                entry.prev_hash,
+                entry.entry_hash,
+            ),
+        )
 
     def _infer_site_id(
         self, target_type: str, target_id: str, explicit_site_id: Optional[str] = None
@@ -540,7 +721,8 @@ class CurationStore:
         site_id: Optional[str] = None,
         timestamp: Optional[datetime] = None,
     ) -> AuditLogEntry:
-        entry = AuditLogEntry(
+        """Append a chained audit row; callers must already hold a `_write_transaction`."""
+        unhashed = AuditLogEntry(
             entry_id=self._next_entry_id(),
             timestamp=timestamp or datetime.now(timezone.utc),
             actor=actor,
@@ -550,26 +732,10 @@ class CurationStore:
             changes=dict(changes),
             reason=reason,
             site_id=site_id,
+            prev_hash=self._chain_head_hash(),
         )
-        self._conn.execute(
-            """
-            INSERT INTO audit_log (
-                entry_id, timestamp, actor, action, target_type, target_id,
-                changes_json, reason, site_id
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                entry.entry_id,
-                entry.timestamp.isoformat(),
-                entry.actor,
-                entry.action,
-                entry.target_type,
-                entry.target_id,
-                json.dumps(entry.changes),
-                entry.reason,
-                entry.site_id,
-            ),
-        )
+        entry = replace(unhashed, entry_hash=_compute_entry_hash(unhashed))
+        self._insert_audit_entry(entry)
         return entry
 
     def get_patch(
@@ -599,6 +765,17 @@ class CurationStore:
             else ItemEditPatch.from_dict(patch)
         )
         now = incoming.updated_at or datetime.now(timezone.utc)
+
+        with self._write_transaction():
+            return self._upsert_patch_locked(incoming, now, actor, reason)
+
+    def _upsert_patch_locked(
+        self,
+        incoming: ItemEditPatch,
+        now: datetime,
+        actor: str,
+        reason: str,
+    ) -> AuditLogEntry:
         existing = self.get_patch(incoming.target_type, incoming.target_id)
         resolved_site_id = self._infer_site_id(
             incoming.target_type, incoming.target_id, incoming.site_id
@@ -640,48 +817,34 @@ class CurationStore:
         if incoming.deleted or (existing is not None and existing.deleted != incoming.deleted):
             changes["deleted"] = incoming.deleted
 
-        with self._conn:
-            self._conn.execute(
-                """
-                INSERT INTO item_patches (
-                    target_type, target_id, site_id, patch_json, updated_at
-                ) VALUES (?, ?, ?, ?, ?)
-                ON CONFLICT(target_type, target_id) DO UPDATE SET
-                    site_id = excluded.site_id,
-                    patch_json = excluded.patch_json,
-                    updated_at = excluded.updated_at
-                """,
-                (
-                    stored_patch.target_type,
-                    stored_patch.target_id,
-                    stored_patch.site_id,
-                    stored_patch.to_json(),
-                    now.isoformat(),
-                ),
-            )
-            if stored_patch.site_id is not None:
-                self._conn.execute(
-                    """
-                    UPDATE audit_log
-                    SET site_id = ?
-                    WHERE target_type = ? AND target_id = ? AND site_id IS NULL
-                    """,
-                    (
-                        stored_patch.site_id,
-                        stored_patch.target_type,
-                        stored_patch.target_id,
-                    ),
-                )
-            return self._record_audit(
-                actor=actor,
-                action="UPSERT_PATCH",
-                target_type=stored_patch.target_type,
-                target_id=stored_patch.target_id,
-                changes=changes,
-                reason=reason,
-                site_id=stored_patch.site_id,
-                timestamp=now,
-            )
+        self._conn.execute(
+            """
+            INSERT INTO item_patches (
+                target_type, target_id, site_id, patch_json, updated_at
+            ) VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(target_type, target_id) DO UPDATE SET
+                site_id = excluded.site_id,
+                patch_json = excluded.patch_json,
+                updated_at = excluded.updated_at
+            """,
+            (
+                stored_patch.target_type,
+                stored_patch.target_id,
+                stored_patch.site_id,
+                stored_patch.to_json(),
+                now.isoformat(),
+            ),
+        )
+        return self._record_audit(
+            actor=actor,
+            action="UPSERT_PATCH",
+            target_type=stored_patch.target_type,
+            target_id=stored_patch.target_id,
+            changes=changes,
+            reason=reason,
+            site_id=stored_patch.site_id,
+            timestamp=now,
+        )
 
     def add_custom_device(
         self,
@@ -695,8 +858,8 @@ class CurationStore:
             if isinstance(device, NetworkDevice)
             else NetworkDevice.from_dict(device)
         )
-        existing_patch = self.get_patch("NetworkDevice", dev.device_id)
-        with self._conn:
+        with self._write_transaction():
+            existing_patch = self.get_patch("NetworkDevice", dev.device_id)
             self._conn.execute(
                 """
                 INSERT INTO custom_devices (device_id, site_id, device_json)
@@ -770,8 +933,8 @@ class CurationStore:
             if isinstance(equipment, Equipment)
             else Equipment.from_dict(equipment)
         )
-        existing_patch = self.get_patch("Equipment", eq.equipment_id)
-        with self._conn:
+        with self._write_transaction():
+            existing_patch = self.get_patch("Equipment", eq.equipment_id)
             self._conn.execute(
                 """
                 INSERT INTO custom_equipment (equipment_id, site_id, equipment_json)
@@ -833,8 +996,8 @@ class CurationStore:
                 else Subnet.from_dict(subnet)
             )
 
-        existing_vlan_patch = self.get_patch("VLAN", vlan_obj.vlan_id)
-        with self._conn:
+        with self._write_transaction():
+            existing_vlan_patch = self.get_patch("VLAN", vlan_obj.vlan_id)
             self._conn.execute(
                 """
                 INSERT INTO custom_vlans (site_id, vlan_id, vlan_json)
@@ -911,14 +1074,16 @@ class CurationStore:
         if port_obj.device_id != clean_dev_id:
             port_obj = replace(port_obj, device_id=clean_dev_id)
 
-        resolved_site_id = (
-            _normalize_optional_str(site_id, "site_id")
-            or self._infer_site_id("NetworkDevice", clean_dev_id)
-            or self._infer_site_id("Port", port_obj.port_id)
-        )
-        existing_patch = self.get_patch("Port", port_obj.port_id)
+        explicit_site_id = _normalize_optional_str(site_id, "site_id")
 
-        with self._conn:
+        with self._write_transaction():
+            resolved_site_id = (
+                explicit_site_id
+                or self._infer_site_id("NetworkDevice", clean_dev_id)
+                or self._infer_site_id("Port", port_obj.port_id)
+            )
+            existing_patch = self.get_patch("Port", port_obj.port_id)
+
             self._conn.execute(
                 """
                 INSERT INTO custom_ports (device_id, port_id, site_id, port_json)
@@ -996,6 +1161,20 @@ class CurationStore:
         """Mark `(target_type, target_id)` as deleted and record an AuditLogEntry."""
         norm_type = _normalize_target_type(target_type, "target_type")
         clean_id = _require_non_empty_str(target_id, "target_id").strip()
+
+        with self._write_transaction():
+            return self._delete_item_locked(
+                norm_type, clean_id, actor, reason, site_id
+            )
+
+    def _delete_item_locked(
+        self,
+        norm_type: str,
+        clean_id: str,
+        actor: str,
+        reason: str,
+        site_id: Optional[str],
+    ) -> AuditLogEntry:
         resolved_site_id = self._infer_site_id(norm_type, clean_id, site_id)
         existing = self.get_patch(norm_type, clean_id)
         now = datetime.now(timezone.utc)
@@ -1016,92 +1195,91 @@ class CurationStore:
                 updated_at=now,
             )
 
-        with self._conn:
+        self._conn.execute(
+            """
+            INSERT INTO item_patches (
+                target_type, target_id, site_id, patch_json, updated_at
+            ) VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(target_type, target_id) DO UPDATE SET
+                site_id = excluded.site_id,
+                patch_json = excluded.patch_json,
+                updated_at = excluded.updated_at
+            """,
+            (
+                deleted_patch.target_type,
+                deleted_patch.target_id,
+                deleted_patch.site_id,
+                deleted_patch.to_json(),
+                now.isoformat(),
+            ),
+        )
+
+        if norm_type == "NetworkDevice":
             self._conn.execute(
-                """
-                INSERT INTO item_patches (
-                    target_type, target_id, site_id, patch_json, updated_at
-                ) VALUES (?, ?, ?, ?, ?)
-                ON CONFLICT(target_type, target_id) DO UPDATE SET
-                    site_id = excluded.site_id,
-                    patch_json = excluded.patch_json,
-                    updated_at = excluded.updated_at
-                """,
-                (
-                    deleted_patch.target_type,
-                    deleted_patch.target_id,
-                    deleted_patch.site_id,
-                    deleted_patch.to_json(),
-                    now.isoformat(),
-                ),
+                "DELETE FROM custom_devices WHERE device_id = ?",
+                (clean_id,),
             )
-
-            if norm_type == "NetworkDevice":
-                self._conn.execute(
-                    "DELETE FROM custom_devices WHERE device_id = ?",
-                    (clean_id,),
-                )
-                self._conn.execute(
-                    "DELETE FROM custom_ports WHERE device_id = ?",
-                    (clean_id,),
-                )
-            elif norm_type == "Equipment":
-                self._conn.execute(
-                    "DELETE FROM custom_equipment WHERE equipment_id = ?",
-                    (clean_id,),
-                )
-            elif norm_type == "VLAN":
-                if resolved_site_id is not None:
-                    self._conn.execute(
-                        "DELETE FROM custom_vlans WHERE site_id = ? AND vlan_id = ?",
-                        (resolved_site_id, clean_id),
-                    )
-                else:
-                    self._conn.execute(
-                        "DELETE FROM custom_vlans WHERE vlan_id = ?",
-                        (clean_id,),
-                    )
-            elif norm_type == "Subnet":
-                if resolved_site_id is not None:
-                    self._conn.execute(
-                        "DELETE FROM custom_subnets WHERE site_id = ? AND subnet_id = ?",
-                        (resolved_site_id, clean_id),
-                    )
-                else:
-                    self._conn.execute(
-                        "DELETE FROM custom_subnets WHERE subnet_id = ?",
-                        (clean_id,),
-                    )
-            elif norm_type == "Port":
-                self._conn.execute(
-                    "DELETE FROM custom_ports WHERE port_id = ?",
-                    (clean_id,),
-                )
-                dev_rows = self._conn.execute(
-                    "SELECT device_id, device_json FROM custom_devices"
-                ).fetchall()
-                for dev_row in dev_rows:
-                    dev = NetworkDevice.from_json(dev_row["device_json"])
-                    filtered_ports = [
-                        p for p in dev.ports if p.port_id != clean_id
-                    ]
-                    if len(filtered_ports) != len(dev.ports):
-                        dev.ports = filtered_ports
-                        self._conn.execute(
-                            "UPDATE custom_devices SET device_json = ? WHERE device_id = ?",
-                            (dev.to_json(), dev.device_id),
-                        )
-
-            return self._record_audit(
-                actor=actor,
-                action="DELETE_ITEM",
-                target_type=norm_type,
-                target_id=clean_id,
-                changes={"deleted": True},
-                reason=reason,
-                site_id=deleted_patch.site_id,
-                timestamp=now,
+            self._conn.execute(
+                "DELETE FROM custom_ports WHERE device_id = ?",
+                (clean_id,),
             )
+        elif norm_type == "Equipment":
+            self._conn.execute(
+                "DELETE FROM custom_equipment WHERE equipment_id = ?",
+                (clean_id,),
+            )
+        elif norm_type == "VLAN":
+            if resolved_site_id is not None:
+                self._conn.execute(
+                    "DELETE FROM custom_vlans WHERE site_id = ? AND vlan_id = ?",
+                    (resolved_site_id, clean_id),
+                )
+            else:
+                self._conn.execute(
+                    "DELETE FROM custom_vlans WHERE vlan_id = ?",
+                    (clean_id,),
+                )
+        elif norm_type == "Subnet":
+            if resolved_site_id is not None:
+                self._conn.execute(
+                    "DELETE FROM custom_subnets WHERE site_id = ? AND subnet_id = ?",
+                    (resolved_site_id, clean_id),
+                )
+            else:
+                self._conn.execute(
+                    "DELETE FROM custom_subnets WHERE subnet_id = ?",
+                    (clean_id,),
+                )
+        elif norm_type == "Port":
+            self._conn.execute(
+                "DELETE FROM custom_ports WHERE port_id = ?",
+                (clean_id,),
+            )
+            dev_rows = self._conn.execute(
+                "SELECT device_id, device_json FROM custom_devices"
+            ).fetchall()
+            for dev_row in dev_rows:
+                dev = NetworkDevice.from_json(dev_row["device_json"])
+                filtered_ports = [
+                    p for p in dev.ports if p.port_id != clean_id
+                ]
+                if len(filtered_ports) != len(dev.ports):
+                    dev.ports = filtered_ports
+                    self._conn.execute(
+                        "UPDATE custom_devices SET device_json = ? WHERE device_id = ?",
+                        (dev.to_json(), dev.device_id),
+                    )
+
+        return self._record_audit(
+            actor=actor,
+            action="DELETE_ITEM",
+            target_type=norm_type,
+            target_id=clean_id,
+            changes={"deleted": True},
+            reason=reason,
+            site_id=deleted_patch.site_id,
+            timestamp=now,
+        )
 
     def list_patches(self, site_id: Optional[str] = None) -> list[ItemEditPatch]:
         """Return stored ItemEditPatch records, filtered to `site_id` when provided."""
@@ -1138,6 +1316,8 @@ class CurationStore:
             changes=json.loads(row["changes_json"]),
             reason=row["reason"],
             site_id=row["site_id"],
+            prev_hash=row["prev_hash"],
+            entry_hash=row["entry_hash"],
         )
 
     def list_audit_log(
@@ -1330,9 +1510,40 @@ class CurationStore:
             a if isinstance(a, AuditLogEntry) else AuditLogEntry.from_dict(a)
             for a in data.get("audit_log", [])
         ]
+        hashed_flags = [
+            a.prev_hash is not None and a.entry_hash is not None for a in audit_entries
+        ]
+        unhashed_flags = [
+            a.prev_hash is None and a.entry_hash is None for a in audit_entries
+        ]
+        if all(hashed_flags):
+            expected_prev = GENESIS_HASH
+            for idx, entry in enumerate(audit_entries):
+                if entry.prev_hash != expected_prev or (
+                    _compute_entry_hash(entry) != entry.entry_hash
+                ):
+                    raise ValueError(
+                        f"audit_log hash chain is broken at index {idx}; refusing import"
+                    )
+                expected_prev = entry.entry_hash
+            legacy_import = False
+        elif all(unhashed_flags):
+            audit_entries = _chain_entries(audit_entries)
+            legacy_import = True
+        else:
+            raise ValueError(
+                "audit_log mixes hash-chained and unhashed entries; refusing import"
+            )
 
-        with self._conn:
-            self._conn.execute("DELETE FROM audit_log")
+        with self._write_transaction():
+            count_row = self._conn.execute(
+                "SELECT COUNT(*) AS cnt FROM audit_log"
+            ).fetchone()
+            if int(count_row["cnt"]) > 0:
+                raise ValueError(
+                    "Refusing to import curation state into a store that already has "
+                    "audit log entries; the audit log is append-only"
+                )
             self._conn.execute("DELETE FROM custom_ports")
             self._conn.execute("DELETE FROM custom_subnets")
             self._conn.execute("DELETE FROM custom_vlans")
@@ -1407,25 +1618,9 @@ class CurationStore:
                 )
 
             for entry in audit_entries:
-                self._conn.execute(
-                    """
-                    INSERT INTO audit_log (
-                        entry_id, timestamp, actor, action, target_type, target_id,
-                        changes_json, reason, site_id
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        entry.entry_id,
-                        entry.timestamp.isoformat(),
-                        entry.actor,
-                        entry.action,
-                        entry.target_type,
-                        entry.target_id,
-                        json.dumps(entry.changes),
-                        entry.reason,
-                        entry.site_id,
-                    ),
-                )
+                self._insert_audit_entry(entry)
+            if legacy_import and audit_entries:
+                self._record_migration_marker(audit_entries, source="json")
 
     @classmethod
     def from_dict(
@@ -1460,6 +1655,63 @@ class CurationStore:
         return target.from_dict(data, db_path=db_path)
 
     import_json = _HybridImportMethod(_import_json_impl)
+
+
+def _validate_anchor(anchor: Any) -> tuple[int, str]:
+    if not isinstance(anchor, (tuple, list)) or len(anchor) != 2:
+        raise ValueError("anchor must be an (entry_count, head_hash) tuple")
+    count, head_hash = anchor
+    if isinstance(count, bool) or not isinstance(count, int) or count < 0:
+        raise ValueError("anchor entry_count must be a non-negative integer")
+    if not isinstance(head_hash, str) or _HASH_PATTERN.fullmatch(head_hash) is None:
+        raise ValueError("anchor head_hash must be 64 lowercase hex characters")
+    if count == 0 and head_hash != GENESIS_HASH:
+        raise ValueError("anchor with entry_count 0 must use GENESIS_HASH")
+    return count, head_hash
+
+
+def verify_audit_chain(
+    store: CurationStore, anchor: Optional[tuple[int, str]] = None
+) -> AuditChainReport:
+    """Walk the audit log in `seq` order and report the first hash-chain break or anchor mismatch."""
+    if not isinstance(store, CurationStore):
+        raise ValueError("store must be a CurationStore instance")
+    anchor_pair = _validate_anchor(anchor) if anchor is not None else None
+
+    rows = store._conn.execute("SELECT * FROM audit_log ORDER BY seq ASC").fetchall()
+    entries = [store._row_to_audit_entry(r) for r in rows]
+    known_hashes = {e.entry_hash for e in entries if e.entry_hash is not None}
+
+    expected_prev = GENESIS_HASH
+    for idx, entry in enumerate(entries):
+        if entry.entry_hash is None or _compute_entry_hash(entry) != entry.entry_hash:
+            return AuditChainReport(
+                ok=False, entries_checked=idx, broken_index=idx, reason="hash_mismatch"
+            )
+        if entry.prev_hash != expected_prev:
+            reason = (
+                "prev_link_broken"
+                if entry.prev_hash == GENESIS_HASH or entry.prev_hash in known_hashes
+                else "gap"
+            )
+            return AuditChainReport(
+                ok=False, entries_checked=idx, broken_index=idx, reason=reason
+            )
+        expected_prev = entry.entry_hash
+
+    if anchor_pair is not None:
+        count, head_hash = anchor_pair
+        if count > 0 and (
+            len(entries) < count or entries[count - 1].entry_hash != head_hash
+        ):
+            return AuditChainReport(
+                ok=False,
+                entries_checked=len(entries),
+                broken_index=count - 1,
+                reason="anchor_mismatch",
+            )
+
+    return AuditChainReport(ok=True, entries_checked=len(entries))
 
 
 def _format_pin_rationale(
