@@ -6,6 +6,7 @@ from sot_validator.curation.store import (
     AuditLogEntry,
     CurationStore,
     ItemEditPatch,
+    VALID_TARGET_TYPES,
     apply_curation_overlay,
 )
 
@@ -13,5 +14,6 @@ __all__ = [
     "AuditLogEntry",
     "CurationStore",
     "ItemEditPatch",
+    "VALID_TARGET_TYPES",
     "apply_curation_overlay",
 ]

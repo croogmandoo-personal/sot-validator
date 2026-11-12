@@ -1,15 +1,18 @@
-"""Unified CLI runner for sot-validator (`extract`, `validate`, `report`, `run`, `history`, `quarantine`, `remediate`, `reconcile`, `campaign`, `preflight`, `reclaim-ports`, `export-modern-sot`, `parity-check`, `ups-health`, `itsm`)."""
+"""Unified CLI runner for sot-validator (`extract`, `validate`, `report`, `run`, `history`, `quarantine`, `remediate`, `reconcile`, `campaign`, `preflight`, `reclaim-ports`, `export-modern-sot`, `parity-check`, `ups-health`, `itsm`, `discover`, `serve`, `curate`, `topology`)."""
 
 from __future__ import annotations
 
 import argparse
 from collections.abc import Mapping, Sequence
 from datetime import datetime, timezone
+import ipaddress
 import json
 from pathlib import Path
 import sqlite3
 import sys
+import threading
 from typing import Any, Optional
+from urllib.request import urlopen
 
 from sot_validator.campaign import (
     CampaignConfig,
@@ -25,6 +28,18 @@ from sot_validator.connectors import (
     PilotCutoverValidator,
     SnmpWalkConnector,
     VSphereRestConnector,
+)
+from sot_validator.curation import (
+    CurationStore,
+    ItemEditPatch,
+    apply_curation_overlay,
+)
+from sot_validator.discovery import (
+    DEFAULT_GATEWAY_OCTETS,
+    DEFAULT_TCP_PORTS,
+    DiscoveredHost,
+    DiscoveryConfig,
+    SubnetDiscoveryScanner,
 )
 from sot_validator.extraction import (
     BatchExtractor,
@@ -52,7 +67,12 @@ from sot_validator.migration import (
     ModernSoTExporter,
 )
 from sot_validator.models import (
+    EquipmentCategory,
+    NetworkDevice,
+    Port,
     Site,
+    Subnet,
+    VLAN,
     ValidationClassification,
     ValidationResult,
 )
@@ -88,6 +108,17 @@ from sot_validator.signals.management import ManagementProbeCollector
 from sot_validator.signals.ups_health import (
     ApcUpsHealthEvaluator,
     UpsFleetHealthReport,
+)
+from sot_validator.topology import (
+    DevicePortManager,
+    DeviceTypeCatalog,
+    NetworkRoleIdentifier,
+    TopologyGraphBuilder,
+)
+from sot_validator.workbench import (
+    WorkbenchState,
+    create_workbench_server,
+    render_workbench_html,
 )
 
 DEFAULT_FIXTURE_EVALUATION_TIME = "2026-02-12T12:00:00Z"
@@ -1890,6 +1921,927 @@ def cmd_itsm(args: argparse.Namespace) -> int:
     return 0
 
 
+def _parse_int_list(raw_values: Optional[Sequence[Any]]) -> list[int]:
+    if not raw_values:
+        return []
+    parsed: list[int] = []
+    for raw in raw_values:
+        for part in str(raw).split(","):
+            cleaned = part.strip()
+            if cleaned:
+                val = int(cleaned)
+                if val not in parsed:
+                    parsed.append(val)
+    return parsed
+
+
+def _load_single_site_snapshot(
+    snapshot_path: Optional[Path],
+    args: argparse.Namespace,
+    *,
+    default_to_fixtures: bool = True,
+) -> Site:
+    """Load a single Site from a JSON snapshot file, a SnapshotStore directory, or source/fixture flags."""
+    wanted_ids = _parse_site_ids(getattr(args, "site_ids", None))
+    explicit_site_id = getattr(args, "site_id", None)
+    if explicit_site_id and not wanted_ids:
+        wanted_ids = [str(explicit_site_id).strip()]
+
+    if snapshot_path is not None:
+        snap = Path(snapshot_path)
+        if snap.is_dir():
+            store_dir = (
+                snap / "snapshots"
+                if (snap / "snapshots" / "sites").exists()
+                and not (snap / "sites").exists()
+                else snap
+            )
+            sites = SnapshotStore(store_dir).load_all_sites()
+            if not sites:
+                raise ValueError(f"No site snapshots found in directory {snap}")
+            if wanted_ids:
+                for s in sites:
+                    if s.site_id in wanted_ids:
+                        return s
+            return sites[0]
+
+        raw = json.loads(snap.read_text(encoding="utf-8"))
+        if isinstance(raw, Mapping):
+            if "site" in raw and isinstance(raw["site"], Mapping):
+                return Site.from_dict(raw["site"])
+            if "sites" in raw and isinstance(raw["sites"], Sequence):
+                sites = [
+                    s if isinstance(s, Site) else Site.from_dict(s)
+                    for s in raw["sites"]
+                ]
+                if not sites:
+                    raise ValueError(f"Empty sites list in {snap}")
+                if wanted_ids:
+                    for s in sites:
+                        if s.site_id in wanted_ids:
+                            return s
+                return sites[0]
+            return Site.from_dict(raw)
+        if isinstance(raw, Sequence) and not isinstance(raw, (str, bytes)):
+            sites = [
+                s if isinstance(s, Site) else Site.from_dict(s) for s in raw
+            ]
+            if not sites:
+                raise ValueError(f"Empty sites list in {snap}")
+            if wanted_ids:
+                for s in sites:
+                    if s.site_id in wanted_ids:
+                        return s
+            return sites[0]
+        raise ValueError(f"Unsupported site snapshot format in {snap}")
+
+    fallback_dir = Path(getattr(args, "output_dir", None) or "./output")
+    sites = _resolve_sites_for_command(
+        args, fallback_dir, default_to_fixtures=default_to_fixtures
+    )
+    if not sites:
+        sites = FixtureSoTClient(num_sites=1).extract_all()
+    if wanted_ids:
+        for s in sites:
+            if s.site_id in wanted_ids:
+                return s
+    return sites[0]
+
+
+def _open_curation_store(
+    curation_db: Optional[Path | str],
+    *,
+    import_json_path: Optional[Path] = None,
+) -> tuple[CurationStore, Optional[Path]]:
+    """Open a CurationStore from SQLite path, JSON state path, or :memory:."""
+    json_export_target: Optional[Path] = None
+    if curation_db is None or str(curation_db).strip() in ("", ":memory:"):
+        store = CurationStore(":memory:")
+    else:
+        db_path = Path(curation_db)
+        if db_path.suffix.lower() == ".json":
+            store = CurationStore(":memory:")
+            if db_path.exists():
+                store.import_json(db_path)
+            json_export_target = db_path
+        else:
+            store = CurationStore(db_path)
+
+    if import_json_path is not None and Path(import_json_path).exists():
+        store.import_json(Path(import_json_path))
+
+    return store, json_export_target
+
+
+def _build_fixture_discovery_callbacks(
+    cidr: str,
+) -> tuple[Any, Any, Any, Any]:
+    """Construct deterministic offline discovery callbacks for `--fixtures` runs."""
+    net = ipaddress.IPv4Network(cidr, strict=False)
+    octets = str(net.network_address).split(".")
+    if net.prefixlen == 24:
+        subnet_prefixes = [f"{octets[0]}.{octets[1]}.{octets[2]}"]
+    else:
+        subnet_prefixes = [
+            f"{octets[0]}.{octets[1]}.1",
+            f"{octets[0]}.{octets[1]}.10",
+        ]
+
+    ping_rtt: dict[str, float] = {}
+    open_ports: dict[str, set[int]] = {}
+    arp_map: dict[str, tuple[str, str]] = {}
+    rdns_map: dict[str, str] = {}
+
+    for idx, pfx in enumerate(subnet_prefixes, start=1):
+        gw_ip = f"{pfx}.1"
+        sw_ip = f"{pfx}.2"
+        hv_ip = f"{pfx}.10"
+        ups_ip = f"{pfx}.20"
+        nas_ip = f"{pfx}.30"
+
+        ping_rtt[gw_ip] = 0.5
+        ping_rtt[sw_ip] = 0.7
+        ping_rtt[hv_ip] = 0.9
+        ping_rtt[ups_ip] = 1.2
+        ping_rtt[nas_ip] = 1.1
+
+        open_ports[gw_ip] = {53, 80, 443}
+        open_ports[sw_ip] = {22, 443}
+        open_ports[hv_ip] = {22, 8006}
+        open_ports[ups_ip] = {80, 443}
+        open_ports[nas_ip] = {445, 5000}
+
+        arp_map[gw_ip] = (f"aa:9c:6c:00:0{idx}:01", "REACHABLE")
+        arp_map[sw_ip] = (f"00:04:96:00:0{idx}:02", "REACHABLE")
+        arp_map[hv_ip] = (f"bc:24:11:00:0{idx}:10", "REACHABLE")
+        arp_map[ups_ip] = (f"00:c0:b7:00:0{idx}:20", "REACHABLE")
+        arp_map[nas_ip] = (f"00:11:32:00:0{idx}:30", "REACHABLE")
+
+        rdns_map[gw_ip] = f"gw-vlan{pfx.split('.')[-1]}.local"
+        rdns_map[sw_ip] = f"sw-core-{idx:02d}.local"
+        rdns_map[hv_ip] = f"pve-node-{idx:02d}.local"
+        rdns_map[ups_ip] = f"apc-ups-{idx:02d}.local"
+        rdns_map[nas_ip] = f"synology-nas-{idx:02d}.local"
+
+    def _ping_fn(ip: str, _timeout: float = 1.0) -> tuple[bool, Optional[float]]:
+        if ip in ping_rtt:
+            return True, ping_rtt[ip]
+        return False, None
+
+    def _tcp_fn(ip: str, port: int, _timeout: float = 0.35) -> bool:
+        return int(port) in open_ports.get(ip, set())
+
+    def _arp_fn() -> dict[str, tuple[str, str]]:
+        return dict(arp_map)
+
+    def _rdns_fn(ip: str) -> Optional[str]:
+        return rdns_map.get(ip)
+
+    return _ping_fn, _tcp_fn, _arp_fn, _rdns_fn
+
+
+def _load_mock_discovery_config(
+    mock_config_path: Path,
+) -> tuple[Optional[list[DiscoveredHost]], Optional[list[str]], Any, Any, Any, Any]:
+    """Load mock discovery hosts or callback tables from a JSON file."""
+    raw = json.loads(Path(mock_config_path).read_text(encoding="utf-8"))
+    if isinstance(raw, Sequence) and not isinstance(raw, (str, bytes)):
+        hosts = [
+            h if isinstance(h, DiscoveredHost) else DiscoveredHost.from_dict(h)
+            for h in raw
+        ]
+        return hosts, None, None, None, None, None
+
+    if not isinstance(raw, Mapping):
+        raise ValueError(f"Unsupported mock discovery config in {mock_config_path}")
+
+    explicit_hosts: Optional[list[DiscoveredHost]] = None
+    if "hosts" in raw and isinstance(raw["hosts"], Sequence):
+        explicit_hosts = [
+            h if isinstance(h, DiscoveredHost) else DiscoveredHost.from_dict(h)
+            for h in raw["hosts"]
+        ]
+
+    explicit_subnets: Optional[list[str]] = None
+    if "active_subnets" in raw and isinstance(raw["active_subnets"], Sequence):
+        explicit_subnets = [str(s) for s in raw["active_subnets"]]
+
+    raw_ping = (
+        raw.get("ping")
+        if "ping" in raw
+        else raw.get("icmp", raw.get("reachable_ips"))
+    )
+    ping_map: dict[str, tuple[bool, Optional[float]]] = {}
+    if isinstance(raw_ping, Mapping):
+        for ip_k, val in raw_ping.items():
+            ip_str = str(ip_k).strip()
+            if isinstance(val, bool):
+                ping_map[ip_str] = (val, 1.0 if val else None)
+            elif isinstance(val, (int, float)):
+                reachable = float(val) >= 0.0
+                ping_map[ip_str] = (reachable, float(val) if reachable else None)
+            elif isinstance(val, Sequence) and not isinstance(val, (str, bytes)):
+                seq = list(val)
+                reachable = bool(seq[0]) if seq else False
+                rtt = float(seq[1]) if len(seq) > 1 and seq[1] is not None and reachable else None
+                ping_map[ip_str] = (reachable, rtt)
+            elif isinstance(val, Mapping):
+                reachable = bool(val.get("reachable", True))
+                raw_rtt = val.get("rtt_ms", val.get("latency_ms", 1.0))
+                ping_map[ip_str] = (
+                    reachable,
+                    float(raw_rtt) if raw_rtt is not None and reachable else None,
+                )
+    elif isinstance(raw_ping, Sequence) and not isinstance(raw_ping, (str, bytes)):
+        for ip_k in raw_ping:
+            ping_map[str(ip_k).strip()] = (True, 1.0)
+
+    raw_tcp = (
+        raw.get("tcp_ports")
+        if "tcp_ports" in raw
+        else raw.get("open_ports", raw.get("open_ports_by_ip"))
+    )
+    tcp_map: dict[str, set[int]] = {}
+    if isinstance(raw_tcp, Mapping):
+        for ip_k, ports_val in raw_tcp.items():
+            if isinstance(ports_val, Sequence) and not isinstance(
+                ports_val, (str, bytes)
+            ):
+                tcp_map[str(ip_k).strip()] = {int(p) for p in ports_val}
+
+    raw_arp = raw.get("arp_table", raw.get("arp"))
+    raw_rdns = raw.get("rdns", raw.get("hostnames", raw.get("rdns_by_ip")))
+    rdns_map: dict[str, str] = {}
+    if isinstance(raw_rdns, Mapping):
+        for ip_k, host_val in raw_rdns.items():
+            if host_val:
+                rdns_map[str(ip_k).strip()] = str(host_val).strip()
+
+    def _ping_fn(ip: str, _timeout: float = 1.0) -> tuple[bool, Optional[float]]:
+        return ping_map.get(ip, (False, None))
+
+    def _tcp_fn(ip: str, port: int, _timeout: float = 0.35) -> bool:
+        return int(port) in tcp_map.get(ip, set())
+
+    def _arp_fn() -> Any:
+        return raw_arp if raw_arp is not None else {}
+
+    def _rdns_fn(ip: str) -> Optional[str]:
+        return rdns_map.get(ip)
+
+    return explicit_hosts, explicit_subnets, _ping_fn, _tcp_fn, _arp_fn, _rdns_fn
+
+
+def _enrich_discovered_site_with_identifier(
+    site: Site,
+    hosts: Sequence[DiscoveredHost],
+    identifier: NetworkRoleIdentifier,
+    catalog: DeviceTypeCatalog,
+) -> Site:
+    """Enrich a discovered Site snapshot with NetworkRoleIdentifier metadata and VLAN/subnet names."""
+    if not hosts:
+        return site
+
+    observations = [
+        {
+            "ip": h.ip,
+            "mac": h.mac_address,
+            "hostname": h.hostname,
+            "open_ports": list(h.open_tcp_ports),
+            "subnet_cidr": h.subnet_cidr,
+            "vlan_id": h.vlan_id,
+        }
+        for h in hosts
+    ]
+    identifications = identifier.identify_hosts(observations)
+    ident_by_ip = {ident.ip: ident for ident in identifications}
+
+    inferred_vlans, inferred_subnets = identifier.infer_vlans_and_subnets(
+        identifications, site_id=site.site_id
+    )
+    inferred_vlan_by_cidr = {v.cidr: v for v in inferred_vlans if v.cidr}
+    inferred_sub_by_cidr = {s.cidr: s for s in inferred_subnets if s.cidr}
+
+    for vlan in site.vlans:
+        if vlan.cidr and vlan.cidr in inferred_vlan_by_cidr:
+            inf_v = inferred_vlan_by_cidr[vlan.cidr]
+            if inf_v.name and (
+                not vlan.name or vlan.name == f"VLAN {vlan.vlan_id}"
+            ):
+                vlan.name = inf_v.name
+
+    for sub in site.subnets:
+        if sub.cidr and sub.cidr in inferred_sub_by_cidr:
+            inf_s = inferred_sub_by_cidr[sub.cidr]
+            if inf_s.name and (
+                not sub.name or sub.name == f"Subnet {sub.cidr}"
+            ):
+                sub.name = inf_s.name
+
+    for dev in site.devices:
+        if dev.management_ip and dev.management_ip in ident_by_ip:
+            ident = ident_by_ip[dev.management_ip]
+            if ident.vendor and not dev.vendor:
+                dev.vendor = ident.vendor
+            if ident.suggested_template_id and not dev.model:
+                try:
+                    tpl = catalog.get(ident.suggested_template_id)
+                    dev.model = tpl.model
+                    if not dev.vendor:
+                        dev.vendor = tpl.vendor
+                except KeyError:
+                    pass
+
+    return site
+
+
+def cmd_discover(args: argparse.Namespace) -> int:
+    gw_octets = (
+        tuple(_parse_int_list(args.gateway_octets))
+        if getattr(args, "gateway_octets", None)
+        else DEFAULT_GATEWAY_OCTETS
+    )
+    tcp_ports = (
+        tuple(_parse_int_list(args.tcp_ports))
+        if getattr(args, "tcp_ports", None)
+        else DEFAULT_TCP_PORTS
+    )
+
+    config = DiscoveryConfig(
+        cidr=args.cidr,
+        gateway_octets=gw_octets,
+        tcp_ports=tcp_ports,
+        max_concurrency=args.max_concurrency,
+        ping_timeout_sec=args.ping_timeout,
+        tcp_timeout_sec=args.tcp_timeout,
+        max_active_subnets=args.max_active_subnets,
+    )
+
+    explicit_hosts: Optional[list[DiscoveredHost]] = None
+    explicit_subnets: Optional[list[str]] = None
+    ping_fn = None
+    tcp_fn = None
+    arp_fn = None
+    rdns_fn = None
+
+    if getattr(args, "mock_config", None) is not None:
+        (
+            explicit_hosts,
+            explicit_subnets,
+            ping_fn,
+            tcp_fn,
+            arp_fn,
+            rdns_fn,
+        ) = _load_mock_discovery_config(Path(args.mock_config))
+    elif getattr(args, "fixtures", False):
+        ping_fn, tcp_fn, arp_fn, rdns_fn = _build_fixture_discovery_callbacks(
+            config.cidr
+        )
+
+    scanner = SubnetDiscoveryScanner(
+        config,
+        ping_fn=ping_fn,
+        tcp_probe_fn=tcp_fn,
+        arp_table_fn=arp_fn,
+        rdns_fn=rdns_fn,
+    )
+
+    if explicit_hosts is not None:
+        hosts = list(explicit_hosts)
+        active_subnets = explicit_subnets
+    else:
+        active_subnets = scanner.discover_active_subnets()
+        hosts = []
+        for sub_cidr in active_subnets[: config.max_active_subnets]:
+            hosts.extend(scanner.sweep_subnet(sub_cidr))
+
+    identifier = NetworkRoleIdentifier()
+    catalog = DeviceTypeCatalog()
+    if hosts:
+        identifications = identifier.identify_hosts(
+            [
+                {
+                    "ip": h.ip,
+                    "mac": h.mac_address,
+                    "hostname": h.hostname,
+                    "open_ports": list(h.open_tcp_ports),
+                    "subnet_cidr": h.subnet_cidr,
+                    "vlan_id": h.vlan_id,
+                }
+                for h in hosts
+            ]
+        )
+        ident_by_ip = {i.ip: i for i in identifications}
+        for h in hosts:
+            ident = ident_by_ip.get(h.ip)
+            if ident is not None and h.inferred_role in ("host", "workstation_server"):
+                if ident.role == "workstation_server":
+                    h.inferred_role = "server" if h.open_tcp_ports else "host"
+                else:
+                    h.inferred_role = ident.role
+
+    observed_at = getattr(args, "evaluation_time", None) or datetime.now(
+        timezone.utc
+    )
+    site = scanner.build_site_snapshot(
+        hosts,
+        active_subnets=active_subnets,
+        site_id=args.site_id,
+        site_name=args.site_name,
+        observed_at=observed_at,
+    )
+    site = _enrich_discovered_site_with_identifier(
+        site, hosts, identifier, catalog
+    )
+
+    output_dir: Optional[Path] = (
+        Path(args.output_dir)
+        if getattr(args, "output_dir", None) is not None
+        else None
+    )
+    output_file: Optional[Path] = (
+        Path(args.output)
+        if getattr(args, "output", None) is not None
+        else (output_dir / "discovered_site.json" if output_dir is not None else None)
+    )
+
+    site_json = site.to_json(indent=2)
+    if output_file is not None:
+        output_file.parent.mkdir(parents=True, exist_ok=True)
+        output_file.write_text(site_json, encoding="utf-8")
+
+    if getattr(args, "snapshot_dir", None) is not None:
+        SnapshotStore(Path(args.snapshot_dir)).save_site(site)
+    elif output_dir is not None:
+        SnapshotStore(output_dir / "snapshots").save_site(site)
+
+    want_html = bool(
+        getattr(args, "html_dashboard", False)
+        or getattr(args, "html_output", None) is not None
+    )
+    want_validate_or_report = bool(
+        getattr(args, "validate", False)
+        or getattr(args, "report", False)
+        or want_html
+        or output_dir is not None
+    )
+
+    if want_validate_or_report:
+        eval_ts_str = (
+            observed_at.isoformat()
+            if isinstance(observed_at, datetime)
+            else str(observed_at)
+        )
+        engine = ClassificationEngine(evaluation_time=eval_ts_str)
+        results = engine.classify_site(site, evaluation_time=eval_ts_str)
+        report_dir = (
+            output_dir
+            or (output_file.parent if output_file is not None else None)
+            or (
+                Path(args.html_output).parent
+                if getattr(args, "html_output", None) is not None
+                else Path("./output")
+            )
+        )
+        report_dir.mkdir(parents=True, exist_ok=True)
+        _write_validation_results_file(
+            results, report_dir, generated_at=eval_ts_str
+        )
+        plan = DryRunActionPlanGenerator(generated_at=eval_ts_str).generate_plan(
+            results, generated_at=eval_ts_str
+        )
+        if getattr(args, "report", False) or output_dir is not None or want_html:
+            paths = generate_all_reports(
+                results,
+                report_dir,
+                sites=[site],
+                action_plan=plan,
+                generated_at=eval_ts_str,
+                include_html_dashboard=want_html,
+            )
+            if getattr(args, "html_output", None) is not None:
+                custom_html = Path(args.html_output)
+                if custom_html.resolve() != paths["html_dashboard"].resolve():
+                    custom_html.parent.mkdir(parents=True, exist_ok=True)
+                    custom_html.write_text(
+                        paths["html_dashboard"].read_text(encoding="utf-8"),
+                        encoding="utf-8",
+                    )
+
+    if output_file is None and output_dir is None and not want_validate_or_report:
+        print(site_json)
+
+    return 0
+
+
+def cmd_serve(args: argparse.Namespace) -> int:
+    site = _load_single_site_snapshot(
+        getattr(args, "snapshot", None), args, default_to_fixtures=True
+    )
+    store, json_export_target = _open_curation_store(
+        getattr(args, "curation_db", None)
+    )
+
+    initial_results: Optional[list[ValidationResult]] = None
+    if getattr(args, "results_file", None) is not None:
+        initial_results = _load_validation_results_file(Path(args.results_file))
+
+    try:
+        state = WorkbenchState(
+            site=site,
+            store=store,
+            initial_results=initial_results,
+        )
+        server = create_workbench_server(
+            state, host=args.host, port=int(args.port)
+        )
+        try:
+            if getattr(args, "check", False):
+                _ = render_workbench_html(state)
+                _ = state.get_state_payload()
+                return 0
+
+            if getattr(args, "once", False):
+                bound_host, bound_port = server.server_address[:2]
+                connect_host = (
+                    "127.0.0.1"
+                    if bound_host in ("0.0.0.0", "::", "")
+                    else str(bound_host)
+                )
+                probe_url = f"http://{connect_host}:{bound_port}/api/health"
+
+                def _self_probe() -> None:
+                    try:
+                        with urlopen(probe_url, timeout=3.0) as resp:
+                            resp.read()
+                    except Exception:
+                        pass
+
+                probe_thread = threading.Thread(target=_self_probe, daemon=True)
+                probe_thread.start()
+                server.handle_request()
+                probe_thread.join(timeout=2.0)
+                return 0
+
+            try:
+                server.serve_forever()
+            except KeyboardInterrupt:
+                pass
+            return 0
+        finally:
+            server.server_close()
+            if json_export_target is not None:
+                store.export_json(json_export_target)
+    finally:
+        store.close()
+
+
+def cmd_curate(args: argparse.Namespace) -> int:
+    store, json_export_target = _open_curation_store(
+        getattr(args, "curation_db", Path("./curation.db")),
+        import_json_path=getattr(args, "import_json", None),
+    )
+
+    try:
+        site: Optional[Site] = None
+        if getattr(args, "snapshot", None) is not None:
+            site = _load_single_site_snapshot(
+                Path(args.snapshot), args, default_to_fixtures=False
+            )
+
+        resolved_site_id = getattr(args, "site_id", None) or (
+            site.site_id if site is not None else None
+        )
+        actor = getattr(args, "actor", None) or "cli-operator"
+        reason = getattr(args, "reason", None) or ""
+
+        # 1. Item patch or delete
+        if getattr(args, "target_type", None) and getattr(
+            args, "target_id", None
+        ):
+            if getattr(args, "delete", False):
+                store.delete_item(
+                    args.target_type,
+                    args.target_id,
+                    actor=actor,
+                    reason=reason,
+                    site_id=resolved_site_id,
+                )
+            else:
+                patch = ItemEditPatch(
+                    target_type=args.target_type,
+                    target_id=args.target_id,
+                    site_id=resolved_site_id,
+                    name=getattr(args, "name", None),
+                    hostname=getattr(args, "hostname", None),
+                    category=getattr(args, "category", None),
+                    role=getattr(args, "role", None),
+                    vendor=getattr(args, "vendor", None),
+                    model=getattr(args, "model", None),
+                    vlan_id=getattr(args, "vlan_id", None),
+                    subnet_id=getattr(args, "subnet_id", None),
+                    room=getattr(args, "room", None),
+                    notes=getattr(args, "notes", None),
+                    pinned_classification=getattr(
+                        args, "pin_classification", None
+                    ),
+                )
+                store.upsert_patch(patch, actor=actor, reason=reason)
+
+        # 2. Add device from template or custom specification
+        add_device_val = getattr(args, "add_device", None)
+        if add_device_val is not None and add_device_val is not False:
+            dev_site_id = resolved_site_id or "site-001"
+            raw_arg_str = (
+                str(add_device_val).strip()
+                if isinstance(add_device_val, str) and add_device_val.strip()
+                else None
+            )
+            hostname = (
+                getattr(args, "hostname", None)
+                or getattr(args, "name", None)
+                or raw_arg_str
+                or getattr(args, "device_id", None)
+                or "custom-device"
+            )
+            raw_dev_id = getattr(args, "device_id", None) or raw_arg_str
+            if raw_dev_id:
+                device_id = str(raw_dev_id).strip()
+            else:
+                slug = "".join(
+                    ch if ch.isalnum() else "-" for ch in hostname.lower()
+                ).strip("-")
+                device_id = f"dev-{slug}" if not slug.startswith("dev-") else slug
+
+            catalog = DeviceTypeCatalog()
+            template_id = getattr(args, "template_id", None)
+            if template_id:
+                device = catalog.instantiate_device(
+                    template_id,
+                    device_id=device_id,
+                    site_id=dev_site_id,
+                    hostname=hostname,
+                    management_ip=getattr(args, "management_ip", None),
+                    port_count=getattr(args, "port_count", None),
+                    default_vlan_id=getattr(args, "vlan_id", None),
+                )
+                if getattr(args, "vendor", None):
+                    device.vendor = args.vendor
+                if getattr(args, "model", None):
+                    device.model = args.model
+                if getattr(args, "role", None):
+                    device.role = args.role
+            else:
+                device = NetworkDevice(
+                    device_id=device_id,
+                    site_id=dev_site_id,
+                    hostname=hostname,
+                    management_ip=getattr(args, "management_ip", None),
+                    vendor=getattr(args, "vendor", None),
+                    model=getattr(args, "model", None),
+                    role=getattr(args, "role", None) or "switch",
+                    ports=[],
+                )
+                if getattr(args, "port_count", None):
+                    DevicePortManager(device).add_port_range(
+                        start=1,
+                        end=int(args.port_count),
+                        naming_pattern="1:{n}",
+                        vlan_id=getattr(args, "vlan_id", None),
+                        overwrite=True,
+                    )
+
+            store.add_custom_device(device, actor=actor, reason=reason)
+        elif (
+            getattr(args, "template_id", None)
+            and getattr(args, "device_id", None)
+            and not getattr(args, "add_port", None)
+            and not getattr(args, "port_range", None)
+        ):
+            dev_site_id = resolved_site_id or "site-001"
+            device_id = str(args.device_id).strip()
+            hostname = (
+                getattr(args, "hostname", None)
+                or getattr(args, "name", None)
+                or device_id
+            )
+            device = DeviceTypeCatalog().instantiate_device(
+                args.template_id,
+                device_id=device_id,
+                site_id=dev_site_id,
+                hostname=hostname,
+                management_ip=getattr(args, "management_ip", None),
+                port_count=getattr(args, "port_count", None),
+                default_vlan_id=getattr(args, "vlan_id", None),
+            )
+            store.add_custom_device(device, actor=actor, reason=reason)
+
+        # 3. Add or update ports on a device
+        port_dev_id = getattr(args, "device_id", None) or (
+            str(add_device_val).strip()
+            if isinstance(add_device_val, str) and add_device_val.strip()
+            else None
+        )
+        if port_dev_id and (
+            getattr(args, "add_port", None) is not None
+            or getattr(args, "port_range", None) is not None
+        ):
+            target_dev: Optional[NetworkDevice] = None
+            for custom_d in store._list_custom_devices():
+                if custom_d.device_id == port_dev_id:
+                    target_dev = custom_d
+                    break
+            if target_dev is None and site is not None:
+                for site_d in site.devices:
+                    if site_d.device_id == port_dev_id:
+                        target_dev = NetworkDevice.from_dict(site_d.to_dict())
+                        break
+            if target_dev is None:
+                target_dev = NetworkDevice(
+                    device_id=port_dev_id,
+                    site_id=resolved_site_id or "site-001",
+                    hostname=port_dev_id,
+                    ports=[],
+                )
+
+            mgr = DevicePortManager(target_dev)
+            touched_ports: list[Port] = []
+            admin_st = getattr(args, "admin_status", None) or "up"
+            oper_st = getattr(args, "oper_status", None) or (
+                "up"
+                if getattr(args, "connected_device_id", None)
+                or getattr(args, "connected_mac", None)
+                else "down"
+            )
+
+            if getattr(args, "add_port", None) is not None:
+                p_obj = mgr.add_port(
+                    args.add_port,
+                    admin_status=admin_st,
+                    oper_status=oper_st,
+                    poe_status=getattr(args, "poe_status", None),
+                    vlan_id=getattr(args, "vlan_id", None),
+                    connected_device_id=getattr(
+                        args, "connected_device_id", None
+                    ),
+                    connected_mac=getattr(args, "connected_mac", None),
+                    overwrite=True,
+                )
+                touched_ports.append(p_obj)
+
+            if getattr(args, "port_range", None) is not None:
+                range_ports = mgr.add_port_range(
+                    args.port_range,
+                    admin_status=admin_st,
+                    oper_status=oper_st,
+                    poe_status=getattr(args, "poe_status", None),
+                    vlan_id=getattr(args, "vlan_id", None),
+                    overwrite=True,
+                )
+                for p_obj in range_ports:
+                    if getattr(args, "connected_device_id", None) is not None:
+                        p_obj.connected_device_id = args.connected_device_id
+                    if getattr(args, "connected_mac", None) is not None:
+                        p_obj.connected_mac = args.connected_mac
+                touched_ports.extend(range_ports)
+
+            for p_obj in touched_ports:
+                store.add_or_update_port(
+                    port_dev_id,
+                    p_obj,
+                    actor=actor,
+                    reason=reason,
+                    site_id=resolved_site_id or target_dev.site_id,
+                )
+
+        # 4. Add custom VLAN if requested
+        if getattr(args, "add_vlan", None) is not None:
+            v_site_id = resolved_site_id or "site-001"
+            vlan_id_str = str(args.add_vlan).strip()
+            vlan_name = getattr(args, "name", None) or f"VLAN {vlan_id_str}"
+            cidr_val = getattr(args, "cidr", None)
+            gw_val = getattr(args, "gateway", None)
+            sub_id = getattr(args, "subnet_id", None) or (
+                f"{v_site_id}-subnet-{vlan_id_str}" if cidr_val else None
+            )
+            vlan_obj = VLAN(
+                vlan_id=vlan_id_str,
+                site_id=v_site_id,
+                name=vlan_name,
+                subnet_id=sub_id,
+                cidr=cidr_val,
+                gateway=gw_val,
+            )
+            sub_obj = (
+                Subnet(
+                    subnet_id=sub_id,
+                    site_id=v_site_id,
+                    cidr=cidr_val,
+                    vlan_id=vlan_id_str,
+                    gateway=gw_val,
+                    name=vlan_name,
+                )
+                if cidr_val and sub_id
+                else None
+            )
+            store.add_custom_vlan(
+                vlan_obj, subnet=sub_obj, actor=actor, reason=reason
+            )
+
+        if json_export_target is not None:
+            store.export_json(json_export_target)
+
+        if getattr(args, "export_json", None) is not None:
+            store.export_json(Path(args.export_json))
+
+        if site is not None and getattr(args, "output", None) is not None:
+            curated_site, _ = apply_curation_overlay(site, store)
+            out_path = Path(args.output)
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+            out_path.write_text(curated_site.to_json(indent=2), encoding="utf-8")
+
+        if getattr(args, "list_audit", False):
+            entries = store.list_audit_log(
+                site_id=getattr(args, "site_id", None),
+                limit=int(getattr(args, "limit", 100)),
+            )
+            audit_json = json.dumps(
+                [e.to_dict() for e in entries], indent=2
+            )
+            print(audit_json)
+            if getattr(args, "output", None) is not None and site is None:
+                out_path = Path(args.output)
+                out_path.parent.mkdir(parents=True, exist_ok=True)
+                out_path.write_text(audit_json, encoding="utf-8")
+
+    finally:
+        store.close()
+
+    return 0
+
+
+def cmd_topology(args: argparse.Namespace) -> int:
+    site = _load_single_site_snapshot(
+        getattr(args, "snapshot", None), args, default_to_fixtures=True
+    )
+    results: Optional[list[ValidationResult]] = None
+    if getattr(args, "results_file", None) is not None:
+        results = _load_validation_results_file(Path(args.results_file))
+
+    if getattr(args, "curation_db", None) is not None:
+        store, _ = _open_curation_store(args.curation_db)
+        try:
+            site, curated_results = apply_curation_overlay(site, store, results)
+            if results is not None or curated_results:
+                results = curated_results
+        finally:
+            store.close()
+
+    builder = TopologyGraphBuilder(
+        include_unconnected_ports=bool(
+            getattr(args, "include_unconnected_ports", False)
+        )
+    )
+    graph = builder.build(site, results)
+
+    output_dir: Optional[Path] = (
+        Path(args.output_dir)
+        if getattr(args, "output_dir", None) is not None
+        else None
+    )
+    output_json: Optional[Path] = (
+        Path(args.output_json)
+        if getattr(args, "output_json", None) is not None
+        else (
+            output_dir / "topology_graph.json"
+            if output_dir is not None
+            else None
+        )
+    )
+    output_mermaid: Optional[Path] = (
+        Path(args.output_mermaid)
+        if getattr(args, "output_mermaid", None) is not None
+        else (
+            output_dir / "topology_graph.mmd"
+            if output_dir is not None
+            else None
+        )
+    )
+
+    if output_json is not None:
+        output_json.parent.mkdir(parents=True, exist_ok=True)
+        output_json.write_text(graph.to_json(indent=2), encoding="utf-8")
+
+    if output_mermaid is not None:
+        output_mermaid.parent.mkdir(parents=True, exist_ok=True)
+        output_mermaid.write_text(graph.to_mermaid(), encoding="utf-8")
+
+    if output_json is None and output_mermaid is None:
+        print(graph.to_json(indent=2))
+
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     """Construct the top-level argparse CLI parser for `sot-validator`."""
     parser = argparse.ArgumentParser(
@@ -3072,6 +4024,522 @@ def build_parser() -> argparse.ArgumentParser:
         help="Optional ISO-8601 UTC timestamp.",
     )
     itsm_parser.set_defaults(func=cmd_itsm)
+
+    # 16. discover (Phase 7)
+    discover_parser = subparsers.add_parser(
+        "discover",
+        help="Run two-stage /16-to-/24 subnet discovery and bootstrap a canonical Site snapshot.",
+    )
+    discover_parser.add_argument(
+        "--cidr",
+        type=str,
+        default="10.42.0.0/16",
+        help="Target IPv4 /16 or /24 CIDR block to discover (default: 10.42.0.0/16).",
+    )
+    discover_parser.add_argument(
+        "--site-id",
+        type=str,
+        default="site-discovered",
+        help="Identifier for the generated Site snapshot (default: site-discovered).",
+    )
+    discover_parser.add_argument(
+        "--site-name",
+        type=str,
+        default="Discovered Site",
+        help="Human-readable name for the generated Site snapshot (default: Discovered Site).",
+    )
+    discover_parser.add_argument(
+        "--output",
+        "--output-file",
+        dest="output",
+        type=Path,
+        default=None,
+        help="Optional output file path for the discovered Site JSON snapshot.",
+    )
+    discover_parser.add_argument(
+        "--output-dir",
+        type=Path,
+        default=None,
+        help="Optional directory to write discovered_site.json, validation_results.json, and reports.",
+    )
+    discover_parser.add_argument(
+        "--snapshot-dir",
+        type=Path,
+        default=None,
+        help="Optional SnapshotStore directory to persist the discovered Site.",
+    )
+    discover_parser.add_argument(
+        "--gateway-octets",
+        nargs="+",
+        action="extend",
+        default=None,
+        help="Gateway host fourth octets to probe during /16 Stage 1 discovery (default: 1).",
+    )
+    discover_parser.add_argument(
+        "--tcp-ports",
+        nargs="+",
+        action="extend",
+        default=None,
+        help="TCP ports to probe on discovered hosts.",
+    )
+    discover_parser.add_argument(
+        "--max-concurrency",
+        type=int,
+        default=128,
+        help="Maximum concurrent async network probes (default: 128).",
+    )
+    discover_parser.add_argument(
+        "--max-active-subnets",
+        type=int,
+        default=32,
+        help="Maximum active /24 subnets to sweep within a /16 (default: 32).",
+    )
+    discover_parser.add_argument(
+        "--ping-timeout",
+        type=float,
+        default=1.0,
+        help="ICMP ping timeout in seconds (default: 1.0).",
+    )
+    discover_parser.add_argument(
+        "--tcp-timeout",
+        type=float,
+        default=0.35,
+        help="TCP connect probe timeout in seconds (default: 0.35).",
+    )
+    discover_parser.add_argument(
+        "--mock-config",
+        "--fixture-config",
+        "--discovery-fixture",
+        dest="mock_config",
+        type=Path,
+        default=None,
+        help="Optional JSON file providing mock ping/TCP/ARP/rDNS callbacks or pre-discovered hosts.",
+    )
+    discover_parser.add_argument(
+        "--fixtures",
+        action="store_true",
+        default=False,
+        help="Use deterministic offline discovery callbacks without live network traffic.",
+    )
+    discover_parser.add_argument(
+        "--evaluation-time",
+        "--observed-at",
+        dest="evaluation_time",
+        type=str,
+        default=None,
+        help="Optional ISO-8601 UTC timestamp for discovery observation and classification.",
+    )
+    discover_parser.add_argument(
+        "--validate",
+        action="store_true",
+        default=False,
+        help="Also run ClassificationEngine on the discovered Site snapshot.",
+    )
+    discover_parser.add_argument(
+        "--report",
+        action="store_true",
+        default=False,
+        help="Also generate JSON, CSV, and Markdown validation reports.",
+    )
+    discover_parser.add_argument(
+        "--html-dashboard",
+        action="store_true",
+        default=False,
+        help="Also generate self-contained interactive HTML5 validation dashboard.",
+    )
+    discover_parser.add_argument(
+        "--html-output",
+        type=Path,
+        default=None,
+        help="Optional custom output path for the HTML5 validation dashboard.",
+    )
+    discover_parser.set_defaults(func=cmd_discover)
+
+    # 17. serve (Phase 8)
+    serve_parser = subparsers.add_parser(
+        "serve",
+        help="Launch the interactive Web Workbench HTTP server and REST API.",
+    )
+    serve_parser.add_argument(
+        "--host",
+        type=str,
+        default="127.0.0.1",
+        help="Bind address for the Workbench HTTP server (default: 127.0.0.1).",
+    )
+    serve_parser.add_argument(
+        "--port",
+        type=int,
+        default=5100,
+        help="TCP port for the Workbench HTTP server (default: 5100).",
+    )
+    serve_parser.add_argument(
+        "--snapshot",
+        "--snapshot-file",
+        dest="snapshot",
+        type=Path,
+        default=None,
+        help="Path to a Site JSON snapshot file or SnapshotStore directory.",
+    )
+    serve_parser.add_argument(
+        "--snapshot-dir",
+        type=Path,
+        default=None,
+        help="Optional SnapshotStore directory when --snapshot is not specified.",
+    )
+    serve_parser.add_argument(
+        "--curation-db",
+        "--db-path",
+        dest="curation_db",
+        type=Path,
+        default=None,
+        help="Path to SQLite CurationStore database or JSON file (defaults to in-memory).",
+    )
+    serve_parser.add_argument(
+        "--results-file",
+        type=Path,
+        default=None,
+        help="Optional validation_results.json file to seed initial classification results.",
+    )
+    serve_parser.add_argument(
+        "--site-id",
+        type=str,
+        default=None,
+        help="Optional site ID to select when loading from a multi-site snapshot.",
+    )
+    serve_parser.add_argument(
+        "--once",
+        action="store_true",
+        default=False,
+        help="Handle a single verification HTTP request and exit cleanly.",
+    )
+    serve_parser.add_argument(
+        "--check",
+        action="store_true",
+        default=False,
+        help="Verify server binding and UI rendering, then exit immediately with code 0.",
+    )
+    _add_source_arguments(serve_parser)
+    serve_parser.set_defaults(func=cmd_serve)
+
+    # 18. curate (Phase 8/9)
+    curate_parser = subparsers.add_parser(
+        "curate",
+        help="Apply operator inventory patches, instantiate template devices, manage switch ports, and inspect audit logs.",
+    )
+    curate_parser.add_argument(
+        "--curation-db",
+        "--db-path",
+        dest="curation_db",
+        type=Path,
+        default=Path("./curation.db"),
+        help="Path to SQLite CurationStore database or JSON state file (default: ./curation.db).",
+    )
+    curate_parser.add_argument(
+        "--snapshot",
+        "--snapshot-file",
+        dest="snapshot",
+        type=Path,
+        default=None,
+        help="Optional Site JSON snapshot file to apply curation overlay against.",
+    )
+    curate_parser.add_argument(
+        "--output",
+        "--output-snapshot",
+        dest="output",
+        type=Path,
+        default=None,
+        help="Optional output path for the curated Site JSON snapshot (or audit log JSON).",
+    )
+    curate_parser.add_argument(
+        "--export-json",
+        type=Path,
+        default=None,
+        help="Optional path to export the full CurationStore state as JSON.",
+    )
+    curate_parser.add_argument(
+        "--import-json",
+        type=Path,
+        default=None,
+        help="Optional path to import CurationStore state from JSON before applying operations.",
+    )
+    curate_parser.add_argument(
+        "--site-id",
+        type=str,
+        default=None,
+        help="Optional site ID context for patches, custom devices, and audit log filtering.",
+    )
+    curate_parser.add_argument(
+        "--actor",
+        type=str,
+        default="cli-operator",
+        help="Operator identifier recorded in the audit log (default: cli-operator).",
+    )
+    curate_parser.add_argument(
+        "--reason",
+        type=str,
+        default="",
+        help="Audit reason for the curation change.",
+    )
+    curate_parser.add_argument(
+        "--target-type",
+        type=str,
+        default=None,
+        help="Target entity type to patch or delete (NetworkDevice, Port, VLAN, Subnet, IPAddress, Equipment).",
+    )
+    curate_parser.add_argument(
+        "--target-id",
+        type=str,
+        default=None,
+        help="Target entity identifier to patch or delete.",
+    )
+    curate_parser.add_argument(
+        "--name",
+        type=str,
+        default=None,
+        help="Updated name for patched item, custom device, or VLAN.",
+    )
+    curate_parser.add_argument(
+        "--hostname",
+        type=str,
+        default=None,
+        help="Updated hostname for patched item or custom device.",
+    )
+    curate_parser.add_argument(
+        "--category",
+        type=str,
+        default=None,
+        help="Updated EquipmentCategory (server, vm, ups, san, other).",
+    )
+    curate_parser.add_argument(
+        "--role",
+        type=str,
+        default=None,
+        help="Updated device or host role (e.g. router, switch, l3_switch, hypervisor, ups, nas).",
+    )
+    curate_parser.add_argument(
+        "--vendor",
+        type=str,
+        default=None,
+        help="Updated hardware/software vendor name.",
+    )
+    curate_parser.add_argument(
+        "--model",
+        type=str,
+        default=None,
+        help="Updated hardware/software model name.",
+    )
+    curate_parser.add_argument(
+        "--vlan-id",
+        type=str,
+        default=None,
+        help="VLAN ID to assign to patched item, custom device, or port(s).",
+    )
+    curate_parser.add_argument(
+        "--subnet-id",
+        type=str,
+        default=None,
+        help="Subnet ID to assign to patched item or custom VLAN.",
+    )
+    curate_parser.add_argument(
+        "--room",
+        type=str,
+        default=None,
+        help="Room/rack location to assign to patched item.",
+    )
+    curate_parser.add_argument(
+        "--notes",
+        type=str,
+        default=None,
+        help="Operator notes to attach to patched item.",
+    )
+    curate_parser.add_argument(
+        "--pin-classification",
+        "--pinned-classification",
+        dest="pin_classification",
+        type=str,
+        default=None,
+        help="Pin ValidationClassification on the target item (e.g. 'Confirmed Active').",
+    )
+    curate_parser.add_argument(
+        "--delete",
+        action="store_true",
+        default=False,
+        help="Mark the specified (--target-type, --target-id) item as deleted.",
+    )
+    curate_parser.add_argument(
+        "--add-device",
+        nargs="?",
+        const=True,
+        default=None,
+        help="Add a custom NetworkDevice (optionally passing hostname or device_id).",
+    )
+    curate_parser.add_argument(
+        "--template-id",
+        "--template",
+        dest="template_id",
+        type=str,
+        default=None,
+        help="DeviceTypeCatalog template ID (e.g. extreme-exos-48p, unifi-multi-vlan-router).",
+    )
+    curate_parser.add_argument(
+        "--device-id",
+        type=str,
+        default=None,
+        help="Device ID for --add-device or port curation (--add-port / --port-range).",
+    )
+    curate_parser.add_argument(
+        "--management-ip",
+        type=str,
+        default=None,
+        help="Management IPv4 address for --add-device.",
+    )
+    curate_parser.add_argument(
+        "--port-count",
+        type=int,
+        default=None,
+        help="Override port count when instantiating a device.",
+    )
+    curate_parser.add_argument(
+        "--add-port",
+        type=str,
+        default=None,
+        help="Add or update a single port by name on --device-id (e.g. '1:1' or 'eth1').",
+    )
+    curate_parser.add_argument(
+        "--port-range",
+        type=str,
+        default=None,
+        help="Add or update a range of ports on --device-id (e.g. '1:1-1:24' or 'eth1..eth8').",
+    )
+    curate_parser.add_argument(
+        "--poe-status",
+        type=str,
+        default=None,
+        help="PoE status for added/updated port(s) (e.g. delivering, auto, off).",
+    )
+    curate_parser.add_argument(
+        "--admin-status",
+        type=str,
+        default=None,
+        help="Administrative status for added/updated port(s) (default: up).",
+    )
+    curate_parser.add_argument(
+        "--oper-status",
+        type=str,
+        default=None,
+        help="Operational status for added/updated port(s).",
+    )
+    curate_parser.add_argument(
+        "--connected-device-id",
+        type=str,
+        default=None,
+        help="Connected downstream device or equipment ID for added/updated port(s).",
+    )
+    curate_parser.add_argument(
+        "--connected-mac",
+        type=str,
+        default=None,
+        help="Connected MAC address for added/updated port(s).",
+    )
+    curate_parser.add_argument(
+        "--add-vlan",
+        type=str,
+        default=None,
+        help="Add or update a custom VLAN with the specified VLAN ID.",
+    )
+    curate_parser.add_argument(
+        "--cidr",
+        type=str,
+        default=None,
+        help="Subnet CIDR when adding a custom VLAN with --add-vlan.",
+    )
+    curate_parser.add_argument(
+        "--gateway",
+        type=str,
+        default=None,
+        help="Gateway IP when adding a custom VLAN with --add-vlan.",
+    )
+    curate_parser.add_argument(
+        "--list-audit",
+        action="store_true",
+        default=False,
+        help="Print the CurationStore audit log as JSON to stdout.",
+    )
+    curate_parser.add_argument(
+        "--limit",
+        type=int,
+        default=100,
+        help="Maximum audit log entries to return with --list-audit (default: 100).",
+    )
+    curate_parser.set_defaults(func=cmd_curate)
+
+    # 19. topology (Phase 9)
+    topology_parser = subparsers.add_parser(
+        "topology",
+        help="Build a site network TopologyGraph (with optional curation overlay) and export JSON and Mermaid diagrams.",
+    )
+    topology_parser.add_argument(
+        "--snapshot",
+        "--snapshot-file",
+        dest="snapshot",
+        type=Path,
+        default=None,
+        help="Path to a Site JSON snapshot file or SnapshotStore directory.",
+    )
+    topology_parser.add_argument(
+        "--snapshot-dir",
+        type=Path,
+        default=None,
+        help="Optional SnapshotStore directory when --snapshot is not specified.",
+    )
+    topology_parser.add_argument(
+        "--curation-db",
+        "--db-path",
+        dest="curation_db",
+        type=Path,
+        default=None,
+        help="Optional CurationStore SQLite DB or JSON state file to overlay before graph construction.",
+    )
+    topology_parser.add_argument(
+        "--results-file",
+        type=Path,
+        default=None,
+        help="Optional validation_results.json file to enrich topology nodes with classifications.",
+    )
+    topology_parser.add_argument(
+        "--site-id",
+        type=str,
+        default=None,
+        help="Optional site ID to select when loading from a multi-site snapshot.",
+    )
+    topology_parser.add_argument(
+        "--include-unconnected-ports",
+        action="store_true",
+        default=False,
+        help="Include down/unconnected switch ports as nodes in the topology graph.",
+    )
+    topology_parser.add_argument(
+        "--output-json",
+        "--output",
+        dest="output_json",
+        type=Path,
+        default=None,
+        help="Output file path for the serialized TopologyGraph JSON.",
+    )
+    topology_parser.add_argument(
+        "--output-mermaid",
+        type=Path,
+        default=None,
+        help="Output file path for the Mermaid flowchart LR diagram (.mmd).",
+    )
+    topology_parser.add_argument(
+        "--output-dir",
+        type=Path,
+        default=None,
+        help="Optional output directory to write topology_graph.json and topology_graph.mmd.",
+    )
+    _add_source_arguments(topology_parser)
+    topology_parser.set_defaults(func=cmd_topology)
 
     return parser
 
