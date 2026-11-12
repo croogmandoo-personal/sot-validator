@@ -633,11 +633,17 @@ def _parse_published_ports(value: Any) -> list[int]:
                 continue
             if "->" in token:
                 port_part = token.split("->", 1)[0].rsplit(":", 1)[-1].strip()
-            elif "/" in token:
-                # Docker "80/tcp" without "->" is exposed but not published.
-                continue
             else:
-                port_part = token.rsplit(":", 1)[-1].strip()
+                # "[ip:]host:container[/proto]" publishes the host side; a bare "80/tcp" is exposed only.
+                segs = [seg.strip() for seg in token.split("/", 1)[0].split(":")]
+                if len(segs) >= 2 and segs[-2].isdigit() and segs[-1].isdigit():
+                    port_part = segs[-2]
+                elif len(segs) >= 2:
+                    port_part = segs[-1]
+                elif "/" in token:
+                    continue
+                else:
+                    port_part = segs[0]
             if port_part.isdigit():
                 p = int(port_part)
                 if 1 <= p <= 65535:
@@ -1266,19 +1272,81 @@ class ProxmoxClusterSnapshot:
         return matches
 
 
-def _extract_vmid_hint(text: Optional[str]) -> Optional[int]:
+def _extract_vmid_hint(text: Any, *, allow_bare: bool = False) -> Optional[int]:
     cleaned = _clean_optional_str(text)
     if not cleaned:
         return None
-    # Only bare digits or explicit Proxmox prefixes count; generic "vm-<n>" names are VMware-style too.
+    # Bare digits only count from an explicit vmid field; numeric SoT/VMware IDs are not Proxmox evidence.
+    # Generic "vm-<n>" names are VMware-style too, so only explicit Proxmox prefixes count.
     # Proxmox VMIDs start at 100, which keeps node names such as "pve-01" from reading as VMIDs.
     if cleaned.isdigit():
         val = int(cleaned)
-        return val if val >= 100 else None
+        return val if allow_bare and val >= 100 else None
     m = re.search(r"(?:^|[-_:/])(?:qemu|lxc|ct|pve)[-_:/]?(\d{3,9})$", cleaned, re.IGNORECASE)
     if m:
         return int(m.group(1))
     return None
+
+
+def _proxmox_host_refs(snapshot: ProxmoxClusterSnapshot) -> set[str]:
+    """Lowercase node names and host IPs of every Proxmox node and Docker/Portainer host in the snapshot."""
+    refs: set[str] = set()
+    for node_name, node_ip in snapshot.node_ips.items():
+        refs.add(node_name.lower())
+        refs.add(node_ip)
+    for g in snapshot.guests:
+        refs.add(g.node.lower())
+        if g.host_ip:
+            refs.add(g.host_ip)
+    for c in snapshot.containers:
+        if c.host_ip:
+            refs.add(c.host_ip)
+    return refs
+
+
+def _matches_proxmox_host(
+    *,
+    ref_ids: Iterable[Optional[str]],
+    ref_names: Iterable[Optional[str]],
+    ref_ips: Iterable[Optional[str]],
+    host_refs: set[str],
+) -> bool:
+    for ref in ref_ids:
+        if ref and ref.lower() in host_refs:
+            return True
+    for ip in ref_ips:
+        norm = normalize_ip_address(ip)
+        if norm and norm in host_refs:
+            return True
+    node_names = [r for r in host_refs if not _is_ip_literal(r)]
+    for name in ref_names:
+        if name and not _is_ip_literal(name) and any(_names_match(name, n) for n in node_names):
+            return True
+    return False
+
+
+def _hypervisor_is_proxmox(
+    hypervisor_id: str, *, host_refs: set[str], site: Optional[Site]
+) -> bool:
+    """Return True when hypervisor_id names a snapshot Proxmox/Docker host, directly or via a site record."""
+    if _matches_proxmox_host(
+        ref_ids=[hypervisor_id], ref_names=[hypervisor_id], ref_ips=[hypervisor_id], host_refs=host_refs
+    ):
+        return True
+    if site is None:
+        return False
+    ref = hypervisor_id.lower()
+    for eq in site.equipment:
+        if eq.equipment_id.lower() == ref and _matches_proxmox_host(
+            ref_ids=[], ref_names=[eq.name], ref_ips=eq.assigned_ips, host_refs=host_refs
+        ):
+            return True
+    for dev in site.devices:
+        if dev.device_id.lower() == ref and _matches_proxmox_host(
+            ref_ids=[], ref_names=[dev.hostname], ref_ips=[dev.management_ip], host_refs=host_refs
+        ):
+            return True
+    return False
 
 
 def _resolve_parent_hypervisor_id(
@@ -1329,6 +1397,13 @@ def _collect_host_ips_in_site(site: Site, snapshot: ProxmoxClusterSnapshot) -> s
         if c.host_ip:
             host_ips.add(c.host_ip)
     return host_ips
+
+
+def _weak_match_allowed(eq: Equipment, parent_refs: set[str]) -> bool:
+    """Name/VMID matches may only enrich an unhosted VM record or one already hosted by this parent."""
+    if eq.hypervisor_id:
+        return eq.hypervisor_id.lower() in parent_refs
+    return eq.category is EquipmentCategory.VM
 
 
 class ProxmoxContainerCollector(SignalCollector):
@@ -1672,12 +1747,27 @@ class ProxmoxContainerCollector(SignalCollector):
                 if nm and nm not in candidate_macs:
                     candidate_macs.append(nm)
 
-        vmid_hint = (
-            _extract_vmid_hint(getattr(equipment, "vmid", None))
-            or _extract_vmid_hint(equipment.hypervisor_id)
-            or _extract_vmid_hint(equipment.equipment_id)
-            or _extract_vmid_hint(equipment.name)
+        # Weak correlation (VMID parsed from name/ID, name or container-ID match) is skipped for
+        # Proxmox/Docker host records and for records hosted by a non-Proxmox hypervisor (e.g. vCenter).
+        host_refs = _proxmox_host_refs(snapshot) if snapshot is not None else set()
+        is_proxmox_host = equipment.category is not EquipmentCategory.VM and _matches_proxmox_host(
+            ref_ids=[equipment.equipment_id],
+            ref_names=[equipment.name],
+            ref_ips=candidate_ips,
+            host_refs=host_refs,
         )
+        hypervisor_is_proxmox = bool(
+            equipment.hypervisor_id
+            and _hypervisor_is_proxmox(equipment.hypervisor_id, host_refs=host_refs, site=site)
+        )
+        foreign_hypervisor = bool(
+            snapshot is not None and equipment.hypervisor_id and not hypervisor_is_proxmox
+        )
+        allow_weak_match = not is_proxmox_host and not foreign_hypervisor
+
+        vmid_hint = _extract_vmid_hint(getattr(equipment, "vmid", None), allow_bare=True)
+        if vmid_hint is None and allow_weak_match:
+            vmid_hint = _extract_vmid_hint(equipment.equipment_id) or _extract_vmid_hint(equipment.name)
         pve_mac_detected = any(is_proxmox_mac(m) for m in candidate_macs)
         has_vm_hint = bool(
             equipment.category is EquipmentCategory.VM
@@ -1739,7 +1829,7 @@ class ProxmoxContainerCollector(SignalCollector):
                     matched_containers.append(c)
                     correlation_key = correlation_key or "ip"
 
-        if not matched_guests and not matched_containers:
+        if not matched_guests and not matched_containers and allow_weak_match:
             for g in snapshot.find_guests(name=equipment.name):
                 if g not in matched_guests:
                     matched_guests.append(g)
@@ -1765,17 +1855,8 @@ class ProxmoxContainerCollector(SignalCollector):
 
         # A generic VM (e.g. VMware) with no match is out of scope for this collector; only
         # Proxmox-specific evidence lets a reachable snapshot confirm the guest is gone.
-        hypervisor_ref = (equipment.hypervisor_id or "").lower()
         has_proxmox_evidence = bool(
-            pve_mac_detected
-            or vmid_hint is not None
-            or (
-                hypervisor_ref
-                and (
-                    hypervisor_ref in snapshot.node_ips
-                    or hypervisor_ref in snapshot.node_ips.values()
-                )
-            )
+            pve_mac_detected or vmid_hint is not None or hypervisor_is_proxmox
         )
 
         if has_vm_hint:
@@ -1910,6 +1991,9 @@ class ProxmoxContainerCollector(SignalCollector):
             elif any(_names_match(eq.name, node_name) for node_name in active_snapshot.node_ips):
                 host_equipment_ids.add(eq.equipment_id)
 
+        # Equipment matched or created for a Proxmox guest; containers must not merge into these.
+        guest_linked_ids: set[str] = set()
+
         # 1. Enrich or add ProxmoxGuestRecords
         for guest in active_snapshot.guests:
             matched_eq: Optional[Equipment] = None
@@ -1935,7 +2019,8 @@ class ProxmoxContainerCollector(SignalCollector):
                         matched_eq = eq
                         break
 
-            # Match by VMID or name, never taking over a record already hosted by another hypervisor
+            # Match by VMID or name only for unhosted VM records or records already hosted by this
+            # guest's node; physical or other-hypervisor records get a separate child record instead.
             if matched_eq is None:
                 guest_host_refs = {
                     ref.lower()
@@ -1951,7 +2036,7 @@ class ProxmoxContainerCollector(SignalCollector):
                 for eq in cloned_site.equipment:
                     if eq.equipment_id in host_equipment_ids:
                         continue
-                    if eq.hypervisor_id and eq.hypervisor_id.lower() not in guest_host_refs:
+                    if not _weak_match_allowed(eq, guest_host_refs):
                         continue
                     if (
                         _extract_vmid_hint(eq.equipment_id) == guest.vmid
@@ -1969,6 +2054,7 @@ class ProxmoxContainerCollector(SignalCollector):
             )
 
             if matched_eq is not None:
+                guest_linked_ids.add(matched_eq.equipment_id)
                 matched_eq.category = EquipmentCategory.VM
                 matched_eq.power_state = guest.status
                 if parent_id and parent_id != matched_eq.equipment_id:
@@ -1995,6 +2081,7 @@ class ProxmoxContainerCollector(SignalCollector):
                     power_state=guest.status,
                 )
                 cloned_site.equipment.append(new_eq)
+                guest_linked_ids.add(new_eq_id)
                 for g_mac in guest.mac_addresses:
                     ip_rec = mac_to_ip_rec.get(g_mac)
                     if ip_rec and not ip_rec.assigned_object_id:
@@ -2034,7 +2121,9 @@ class ProxmoxContainerCollector(SignalCollector):
                 for eq in cloned_site.equipment:
                     if eq.equipment_id in host_equipment_ids:
                         continue
-                    if eq.hypervisor_id and eq.hypervisor_id.lower() not in container_host_refs:
+                    if eq.equipment_id in guest_linked_ids:
+                        continue
+                    if not _weak_match_allowed(eq, container_host_refs):
                         continue
                     if (
                         _names_match(eq.name, container.name)

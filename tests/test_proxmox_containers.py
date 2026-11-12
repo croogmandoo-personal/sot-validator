@@ -669,6 +669,12 @@ def test_parse_mac_rejects_ip_strings_and_container_unpublished_ports() -> None:
         image="nginx",
         published_ports="0.0.0.0:8080->80/tcp, 9000/tcp",
     ).published_ports == [8080]
+    assert ContainerEndpointRecord(
+        container_id="feedface0003",
+        name="web-compose",
+        image="nginx",
+        published_ports="8080:80/tcp, 127.0.0.1:8443:443, 80/tcp",
+    ).published_ports == [8080, 8443]
 
 
 def test_evaluate_and_enrich_ignore_vmware_vm_sharing_proxmox_vmid() -> None:
@@ -717,3 +723,117 @@ def test_evaluate_and_enrich_ignore_vmware_vm_sharing_proxmox_vmid() -> None:
     assert eq_by_id["eq-app-110"].category is EquipmentCategory.SERVER
     assert eq_by_id["eq-app-110"].hypervisor_id == "vcenter-01"
     assert eq_by_id["site-42-pve-lxc-110"].hypervisor_id == "eq-pve-01"
+
+
+def _weak_match_snapshot() -> ProxmoxClusterSnapshot:
+    return ProxmoxClusterSnapshot.from_dict(
+        {
+            "data": [
+                {"type": "node", "node": "pve-01", "ip": "10.42.10.21"},
+                {"type": "qemu", "vmid": 101, "name": "pve-guest-101", "node": "pve-01", "status": "running"},
+                {"type": "qemu", "vmid": 250, "name": "linux250", "node": "pve-01", "status": "running"},
+                {"type": "lxc", "vmid": 260, "name": "web01", "node": "pve-01", "status": "running"},
+            ],
+            "containers": [
+                {
+                    "container_id": "c33333333333",
+                    "name": "web01",
+                    "image": "nginx:latest",
+                    "host_ip": "10.42.10.21",
+                    "state": "exited",
+                }
+            ],
+        }
+    )
+
+
+def test_evaluate_signal_ignores_numeric_ids_hosts_and_foreign_hypervisor_names() -> None:
+    snap = _weak_match_snapshot()
+    collector = ProxmoxContainerCollector(snapshot=snap)
+
+    # Bare numeric SoT/VMware equipment_id is not a Proxmox VMID
+    vmware_numeric = Equipment(
+        equipment_id="250",
+        site_id="site-42",
+        name="sql-cluster-node",
+        category=EquipmentCategory.VM,
+        hypervisor_id="vcenter-01",
+    )
+    assert collector.evaluate(vmware_numeric).status is SignalStatus.NOT_APPLICABLE
+    unhosted_numeric = Equipment(
+        equipment_id="250", site_id="site-42", name="sql-cluster-node", category=EquipmentCategory.VM
+    )
+    assert collector.evaluate(unhosted_numeric).status is SignalStatus.NOT_APPLICABLE
+
+    # A Proxmox host record named like a VMID does not correlate to guest 101
+    pve_host = Equipment(
+        equipment_id="eq-pve-host",
+        site_id="site-42",
+        name="pve-101",
+        category=EquipmentCategory.SERVER,
+        assigned_ips=["10.42.10.21"],
+    )
+    assert collector.evaluate(pve_host).status is SignalStatus.NOT_APPLICABLE
+
+    # A VMware VM sharing a name with a running Proxmox guest is not correlated by name
+    vmware_web = Equipment(
+        equipment_id="eq-web01",
+        site_id="site-42",
+        name="web01",
+        category=EquipmentCategory.VM,
+        hypervisor_id="vcenter-01",
+    )
+    assert collector.evaluate(vmware_web).status is SignalStatus.NOT_APPLICABLE
+
+    # A record hosted by the Proxmox node (resolved through the site) still matches by name
+    host_eq = Equipment(
+        equipment_id="eq-pve-01",
+        site_id="site-42",
+        name="pve-01",
+        category=EquipmentCategory.SERVER,
+        assigned_ips=["10.42.10.21"],
+    )
+    pve_web = Equipment(
+        equipment_id="eq-web01-pve",
+        site_id="site-42",
+        name="web01",
+        category=EquipmentCategory.VM,
+        hypervisor_id="eq-pve-01",
+    )
+    site = Site(site_id="site-42", name="Edge 42", equipment=[host_eq, pve_web])
+    sig = collector.evaluate(pve_web, site=site)
+    assert sig.status is SignalStatus.ACTIVE
+    assert sig.metadata["correlation_key"] == "name"
+
+
+def test_enrich_keeps_physical_server_with_guest_name_and_separates_containers() -> None:
+    snap = _weak_match_snapshot()
+    collector = ProxmoxContainerCollector(snapshot=snap)
+    host_eq = Equipment(
+        equipment_id="eq-pve-01",
+        site_id="site-42",
+        name="pve-01",
+        category=EquipmentCategory.SERVER,
+        assigned_ips=["10.42.10.21"],
+    )
+    physical = Equipment(
+        equipment_id="eq-linux250",
+        site_id="site-42",
+        name="linux250",
+        category=EquipmentCategory.SERVER,
+        assigned_ips=["10.42.10.200"],
+    )
+    site = Site(site_id="site-42", name="Edge 42", equipment=[host_eq, physical])
+    enriched = collector.enrich_site_with_guests(site)
+    eq_by_id = {eq.equipment_id: eq for eq in enriched.equipment}
+
+    assert eq_by_id["eq-linux250"].category is EquipmentCategory.SERVER
+    assert eq_by_id["eq-linux250"].hypervisor_id is None
+    assert eq_by_id["eq-linux250"].power_state is None
+    assert eq_by_id["site-42-pve-qemu-250"].hypervisor_id == "eq-pve-01"
+    assert eq_by_id["site-42-pve-qemu-250"].power_state == "running"
+
+    # The exited Docker container "web01" does not overwrite the running LXC guest "web01"
+    assert eq_by_id["site-42-pve-lxc-260"].power_state == "running"
+    assert eq_by_id["site-42-ct-web01"].power_state == "exited"
+    assert eq_by_id["site-42-ct-web01"].hypervisor_id == "eq-pve-01"
