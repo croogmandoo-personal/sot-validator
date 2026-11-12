@@ -8,6 +8,7 @@ import json
 import threading
 from typing import Any
 from urllib.error import HTTPError
+from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 
 import pytest
@@ -30,11 +31,23 @@ from sot_validator.models import (
 )
 from sot_validator.workbench import (
     WorkbenchRequestHandler,
+    WorkbenchSecurityConfig,
     WorkbenchServer,
     WorkbenchState,
     create_workbench_server,
     render_workbench_html,
 )
+
+WORKBENCH_TEST_TOKEN = "test-workbench-token"
+
+
+def _auth_headers(url: str) -> dict[str, str]:
+    parsed = urlparse(url)
+    return {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {WORKBENCH_TEST_TOKEN}",
+        "Origin": f"{parsed.scheme}://{parsed.netloc}",
+    }
 
 
 def _sample_site() -> Site:
@@ -140,7 +153,12 @@ def workbench_state() -> WorkbenchState:
 def live_workbench(
     workbench_state: WorkbenchState,
 ) -> Iterator[tuple[str, WorkbenchServer, WorkbenchState]]:
-    server = create_workbench_server(workbench_state, host="127.0.0.1", port=0)
+    server = create_workbench_server(
+        workbench_state,
+        host="127.0.0.1",
+        port=0,
+        security=WorkbenchSecurityConfig(token=WORKBENCH_TEST_TOKEN),
+    )
     host, port = server.server_address[:2]
     base_url = f"http://{host}:{port}"
     thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -169,7 +187,7 @@ def _http_post_json(
     req = Request(
         url,
         data=data,
-        headers={"Content-Type": "application/json"},
+        headers=_auth_headers(url),
         method="POST",
     )
     try:
