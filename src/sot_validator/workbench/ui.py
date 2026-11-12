@@ -1671,8 +1671,14 @@ function loadWorkbenchToken() {{
 loadWorkbenchToken();
 
 function authFailureMessage(status) {{
-  if (status === 401 || status === 403) {{
-    return 'Write rejected: reload this page with #token=<token> to authenticate.';
+  if (status === 401) {{
+    if (!workbenchToken()) {{
+      return 'No workbench token set: reload this page with #token=<token> to enable edits.';
+    }}
+    return 'Workbench token rejected: check the token and reload this page with #token=<token>.';
+  }}
+  if (status === 403) {{
+    return 'Write rejected as cross-origin: open the workbench at its own address and reload with #token=<token>.';
   }}
   if (status === 413) {{
     return 'Request too large: shorten the form and try again.';

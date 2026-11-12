@@ -538,3 +538,12 @@ def test_null_or_malformed_origin_and_referer_are_rejected(
 
         _status, _headers, audit_raw = _http("GET", f"{base_url}/api/audit-log")
         assert json.loads(audit_raw.decode("utf-8"))["audit_log"] == []
+
+
+def test_ui_auth_banners_distinguish_missing_token_wrong_token_and_cross_origin() -> None:
+    page = render_workbench_html(WorkbenchState(_sample_site()))
+    assert "No workbench token set: reload this page with #token=&lt;token&gt;" not in page
+    assert "No workbench token set: reload this page with #token=<token>" in page
+    assert "Workbench token rejected: check the token" in page
+    assert "Write rejected as cross-origin" in page
+    assert "Request too large" in page
