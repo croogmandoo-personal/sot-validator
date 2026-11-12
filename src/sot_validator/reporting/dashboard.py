@@ -13,6 +13,16 @@ from sot_validator.history.ledger import (
     ItemStreakSummary,
     SubnetUtilizationSummary,
 )
+from sot_validator.itsm.tickets import (
+    InMemoryItsmSink,
+    ItsmTicketRequest,
+    TicketApprovalStatus,
+)
+from sot_validator.migration.parity import (
+    CutoverRecommendation,
+    ParityValidationReport,
+    SiteMigrationReadinessScorecard,
+)
 from sot_validator.models import (
     Site,
     ValidationClassification,
@@ -20,14 +30,15 @@ from sot_validator.models import (
 )
 from sot_validator.reconciliation.reconciler import (
     ALL_DISCREPANCY_TYPES,
-    DiscrepancyRecord,
     ReconciliationReport,
+)
+from sot_validator.remediation.port_reclamation import (
+    PortReclamationPlan,
 )
 from sot_validator.remediation.quarantine import (
     ApprovalStatus,
     QuarantineEngine,
     QuarantineGraduationStatus,
-    QuarantineManifestEntry,
     QuarantinePolicy,
     RemediationApprovalManifest,
     RemediationOperation,
@@ -41,6 +52,11 @@ from sot_validator.reporting.generators import (
     _index_sites,
     _resolve_report_timestamp,
     generate_json_report,
+)
+from sot_validator.signals.ups_health import (
+    UpsFleetHealthReport,
+    UpsHealthRecord,
+    UpsHealthStatus,
 )
 
 DEFAULT_DASHBOARD_FILENAME = "validation_dashboard.html"
@@ -66,13 +82,45 @@ def _classification_badge_class(classification: str) -> str:
 
 def _approval_badge_class(status: str) -> str:
     upper = status.upper()
-    if upper == ApprovalStatus.APPROVED.value:
+    if upper in (
+        ApprovalStatus.APPROVED.value,
+        TicketApprovalStatus.APPROVED.value,
+        TicketApprovalStatus.IMPLEMENTED.value,
+    ):
         return "badge-active"
-    if upper == ApprovalStatus.PENDING.value:
+    if upper in (
+        ApprovalStatus.PENDING.value,
+        TicketApprovalStatus.PENDING.value,
+        TicketApprovalStatus.SCHEDULED.value,
+    ):
         return "badge-unreachable"
-    if upper == ApprovalStatus.REJECTED.value:
+    if upper in (
+        ApprovalStatus.REJECTED.value,
+        TicketApprovalStatus.REJECTED.value,
+        TicketApprovalStatus.CANCELLED.value,
+    ):
         return "badge-stale"
     return "badge-insufficient"
+
+
+def _ups_status_badge_class(status: str) -> str:
+    upper = status.upper()
+    if upper == UpsHealthStatus.HEALTHY.value:
+        return "badge-active"
+    if upper == UpsHealthStatus.WARNING.value:
+        return "badge-unreachable"
+    if upper == UpsHealthStatus.CRITICAL.value:
+        return "badge-stale"
+    return "badge-insufficient"
+
+
+def _cutover_badge_class(recommendation: str) -> str:
+    upper = recommendation.upper()
+    if upper == CutoverRecommendation.READY_FOR_CUTOVER.value:
+        return "badge-active"
+    if upper == CutoverRecommendation.NEEDS_REMEDIATION.value:
+        return "badge-unreachable"
+    return "badge-stale"
 
 
 def _coerce_manifest(
@@ -88,7 +136,9 @@ def _coerce_manifest(
 
 
 def _coerce_streaks(
-    raw_streaks: Optional[Sequence[ItemStreakSummary | Mapping[str, Any]] | HistoryStore],
+    raw_streaks: Optional[
+        Sequence[ItemStreakSummary | Mapping[str, Any]] | HistoryStore
+    ],
 ) -> Optional[list[ItemStreakSummary]]:
     if raw_streaks is None:
         return None
@@ -135,6 +185,131 @@ def _coerce_subnet_utilization(
     return []
 
 
+def _coerce_port_reclamation_plan(
+    raw_plan: Optional[PortReclamationPlan | Mapping[str, Any]],
+) -> Optional[PortReclamationPlan]:
+    if raw_plan is None:
+        return None
+    if isinstance(raw_plan, PortReclamationPlan):
+        return raw_plan
+    if isinstance(raw_plan, Mapping):
+        return PortReclamationPlan.from_dict(raw_plan)
+    raise ValueError(
+        f"Unsupported port_reclamation_plan type: {type(raw_plan)!r}"
+    )
+
+
+def _coerce_parity_report(
+    raw_parity: Optional[
+        ParityValidationReport
+        | SiteMigrationReadinessScorecard
+        | Sequence[SiteMigrationReadinessScorecard | Mapping[str, Any]]
+        | Mapping[str, Any]
+    ],
+) -> Optional[ParityValidationReport]:
+    if raw_parity is None:
+        return None
+    if isinstance(raw_parity, ParityValidationReport):
+        return raw_parity
+    if isinstance(raw_parity, SiteMigrationReadinessScorecard):
+        return ParityValidationReport(
+            scorecards=[raw_parity], evaluated_at=raw_parity.evaluated_at
+        )
+    if isinstance(raw_parity, Mapping):
+        if "scorecards" in raw_parity or "sites" in raw_parity:
+            return ParityValidationReport.from_dict(raw_parity)
+        if "site_id" in raw_parity and (
+            "readiness_score" in raw_parity or "recommendation" in raw_parity
+        ):
+            sc = SiteMigrationReadinessScorecard.from_dict(raw_parity)
+            return ParityValidationReport(
+                scorecards=[sc], evaluated_at=sc.evaluated_at
+            )
+    if isinstance(raw_parity, Sequence) and not isinstance(
+        raw_parity, (str, bytes)
+    ):
+        cards = [
+            c
+            if isinstance(c, SiteMigrationReadinessScorecard)
+            else SiteMigrationReadinessScorecard.from_dict(c)
+            for c in raw_parity
+        ]
+        return ParityValidationReport(scorecards=cards)
+    raise ValueError(f"Unsupported parity_report type: {type(raw_parity)!r}")
+
+
+def _coerce_ups_health_report(
+    raw_ups: Optional[
+        UpsFleetHealthReport
+        | UpsHealthRecord
+        | Sequence[UpsHealthRecord | Mapping[str, Any]]
+        | Mapping[str, Any]
+    ],
+) -> Optional[UpsFleetHealthReport]:
+    if raw_ups is None:
+        return None
+    if isinstance(raw_ups, UpsFleetHealthReport):
+        return raw_ups
+    if isinstance(raw_ups, UpsHealthRecord):
+        return UpsFleetHealthReport(
+            records=[raw_ups], evaluated_at=raw_ups.evaluated_at
+        )
+    if isinstance(raw_ups, Mapping):
+        if "records" in raw_ups:
+            return UpsFleetHealthReport.from_dict(raw_ups)
+        if "equipment_id" in raw_ups and "status" in raw_ups:
+            rec = UpsHealthRecord.from_dict(raw_ups)
+            return UpsFleetHealthReport(records=[rec], evaluated_at=rec.evaluated_at)
+    if isinstance(raw_ups, Sequence) and not isinstance(raw_ups, (str, bytes)):
+        recs = [
+            r if isinstance(r, UpsHealthRecord) else UpsHealthRecord.from_dict(r)
+            for r in raw_ups
+        ]
+        return UpsFleetHealthReport(records=recs)
+    raise ValueError(f"Unsupported ups_health_report type: {type(raw_ups)!r}")
+
+
+def _coerce_itsm_tickets(
+    raw_tickets: Optional[
+        Sequence[ItsmTicketRequest | Mapping[str, Any]]
+        | Mapping[str, Any]
+        | ItsmTicketRequest
+        | InMemoryItsmSink
+    ],
+) -> list[ItsmTicketRequest]:
+    if raw_tickets is None:
+        return []
+    if isinstance(raw_tickets, InMemoryItsmSink):
+        return list(raw_tickets.tickets)
+    if isinstance(raw_tickets, ItsmTicketRequest):
+        return [raw_tickets]
+    if isinstance(raw_tickets, Mapping):
+        if "ticket_id" in raw_tickets:
+            return [ItsmTicketRequest.from_dict(raw_tickets)]
+        if "tickets" in raw_tickets and isinstance(raw_tickets["tickets"], Sequence):
+            return [
+                t
+                if isinstance(t, ItsmTicketRequest)
+                else ItsmTicketRequest.from_dict(t)
+                for t in raw_tickets["tickets"]
+            ]
+        return [
+            v
+            if isinstance(v, ItsmTicketRequest)
+            else ItsmTicketRequest.from_dict({**v, "ticket_id": v.get("ticket_id", k)})
+            for k, v in raw_tickets.items()
+            if isinstance(v, (ItsmTicketRequest, Mapping))
+        ]
+    if isinstance(raw_tickets, Sequence) and not isinstance(
+        raw_tickets, (str, bytes)
+    ):
+        return [
+            t if isinstance(t, ItsmTicketRequest) else ItsmTicketRequest.from_dict(t)
+            for t in raw_tickets
+        ]
+    raise ValueError(f"Unsupported itsm_tickets type: {type(raw_tickets)!r}")
+
+
 def generate_html_dashboard(
     results: Sequence[ValidationResult | Mapping[str, Any]],
     *,
@@ -153,6 +328,52 @@ def generate_html_dashboard(
     reconciliation: Optional[ReconciliationReport | Mapping[str, Any]] = None,
     subnet_utilization: Optional[
         Sequence[SubnetUtilizationSummary | Mapping[str, Any]]
+    ] = None,
+    port_reclamation_plan: Optional[
+        PortReclamationPlan | Mapping[str, Any]
+    ] = None,
+    port_plan: Optional[PortReclamationPlan | Mapping[str, Any]] = None,
+    migration_parity_report: Optional[
+        ParityValidationReport
+        | SiteMigrationReadinessScorecard
+        | Sequence[SiteMigrationReadinessScorecard | Mapping[str, Any]]
+        | Mapping[str, Any]
+    ] = None,
+    parity_report: Optional[
+        ParityValidationReport
+        | SiteMigrationReadinessScorecard
+        | Sequence[SiteMigrationReadinessScorecard | Mapping[str, Any]]
+        | Mapping[str, Any]
+    ] = None,
+    migration_scorecards: Optional[
+        ParityValidationReport
+        | SiteMigrationReadinessScorecard
+        | Sequence[SiteMigrationReadinessScorecard | Mapping[str, Any]]
+        | Mapping[str, Any]
+    ] = None,
+    ups_health_report: Optional[
+        UpsFleetHealthReport
+        | UpsHealthRecord
+        | Sequence[UpsHealthRecord | Mapping[str, Any]]
+        | Mapping[str, Any]
+    ] = None,
+    ups_report: Optional[
+        UpsFleetHealthReport
+        | UpsHealthRecord
+        | Sequence[UpsHealthRecord | Mapping[str, Any]]
+        | Mapping[str, Any]
+    ] = None,
+    itsm_tickets: Optional[
+        Sequence[ItsmTicketRequest | Mapping[str, Any]]
+        | Mapping[str, Any]
+        | ItsmTicketRequest
+        | InMemoryItsmSink
+    ] = None,
+    tickets: Optional[
+        Sequence[ItsmTicketRequest | Mapping[str, Any]]
+        | Mapping[str, Any]
+        | ItsmTicketRequest
+        | InMemoryItsmSink
     ] = None,
     output_path: Optional[Path | str] = None,
     generated_at: Optional[datetime | str] = None,
@@ -181,6 +402,25 @@ def generate_html_dashboard(
     )
     resolved_subnets = _coerce_subnet_utilization(
         subnet_utilization, sites_by_id, results
+    )
+    resolved_port_plan = _coerce_port_reclamation_plan(
+        port_reclamation_plan
+        if port_reclamation_plan is not None
+        else port_plan
+    )
+    raw_parity_arg = (
+        migration_parity_report
+        if migration_parity_report is not None
+        else (
+            parity_report if parity_report is not None else migration_scorecards
+        )
+    )
+    resolved_parity = _coerce_parity_report(raw_parity_arg)
+    resolved_ups = _coerce_ups_health_report(
+        ups_health_report if ups_health_report is not None else ups_report
+    )
+    resolved_tickets = _coerce_itsm_tickets(
+        itsm_tickets if itsm_tickets is not None else tickets
     )
 
     # Compute KPI counts
@@ -240,6 +480,30 @@ def generate_html_dashboard(
         if resolved_reconciliation is not None
         else 0
     )
+
+    reclaimable_ports_count = (
+        len(resolved_port_plan.candidates)
+        if resolved_port_plan is not None
+        else 0
+    )
+    poe_watts_saved = (
+        float(resolved_port_plan.estimated_poe_watts_saved)
+        if resolved_port_plan is not None
+        else 0.0
+    )
+    ready_cutover_sites_count = (
+        resolved_parity.ready_for_cutover_count
+        if resolved_parity is not None
+        else 0
+    )
+    ups_alerts_count = (
+        resolved_ups.critical_count
+        + resolved_ups.warning_count
+        + resolved_ups.unreachable_count
+        if resolved_ups is not None
+        else 0
+    )
+    itsm_tickets_count = len(resolved_tickets)
 
     enriched_results: list[dict[str, Any]] = json_report["results"]
     by_site_summary: dict[str, dict[str, Any]] = json_report["summary"][
@@ -493,6 +757,225 @@ def generate_html_dashboard(
             )
         disc_rows_html.append(
             '<tr><td colspan="11" class="empty-cell">No Phase 3 reverse discovery reconciliation report provided.</td></tr>'
+        )
+
+    # 6. Build Phase 4 Extreme Networks Switch Port & PoE Reclamation Section
+    port_plan_meta_html = ""
+    port_candidates_rows_html: list[str] = []
+    port_blocked_rows_html: list[str] = []
+    if resolved_port_plan is not None:
+        port_plan_meta_html = (
+            '<div class="section-meta">'
+            f"<span><strong>Plan ID:</strong> <code>{_esc(resolved_port_plan.plan_id)}</code></span> "
+            f"<span><strong>CLI Dialect:</strong> <code>{_esc(resolved_port_plan.dialect.value.upper())}</code></span> "
+            f"<span><strong>Eligible Ports:</strong> <code>{len(resolved_port_plan.candidates)}</code></span> "
+            f"<span><strong>LLDP Guard Protected:</strong> <code>{len(resolved_port_plan.blocked_ports)}</code></span> "
+            f"<span><strong>Estimated PoE Savings:</strong> <code>{resolved_port_plan.estimated_poe_watts_saved:.2f}W</code></span> "
+            '<span class="badge badge-active">DRY-RUN STAGED</span>'
+            "</div>"
+        )
+        if resolved_port_plan.candidates:
+            for cand in resolved_port_plan.candidates:
+                exos_cmds_str = " ; ".join(cand.exos_disable_commands)
+                voss_cmds_str = " ; ".join(cand.voss_disable_commands)
+                port_candidates_rows_html.append(
+                    "<tr>"
+                    f"<td><code>{_esc(cand.site_id or '-')}</code></td>"
+                    f"<td><code>{_esc(cand.device_id)}</code></td>"
+                    f"<td><code>{_esc(cand.port_name)}</code></td>"
+                    f'<td class="num">{cand.inactive_runs}</td>'
+                    f'<td class="num">{cand.inactive_days:.1f}</td>'
+                    f'<td class="num">{cand.estimated_poe_watts_saved:.2f}W</td>'
+                    f"<td><code>{_esc(exos_cmds_str)}</code></td>"
+                    f"<td><code>{_esc(voss_cmds_str)}</code></td>"
+                    f"<td><code>{_esc(cand.exos_rollback_command)}</code></td>"
+                    "</tr>"
+                )
+        else:
+            port_candidates_rows_html.append(
+                '<tr><td colspan="9" class="empty-cell">No eligible switch ports for reclamation.</td></tr>'
+            )
+
+        if resolved_port_plan.blocked_ports:
+            for bport in resolved_port_plan.blocked_ports:
+                rules_str = ", ".join(bport.matched_rules) or "-"
+                port_blocked_rows_html.append(
+                    "<tr>"
+                    f"<td><code>{_esc(bport.site_id or '-')}</code></td>"
+                    f"<td><code>{_esc(bport.device_id)}</code></td>"
+                    f"<td><code>{_esc(bport.port_name)}</code></td>"
+                    f"<td><code>{_esc(bport.port_id)}</code></td>"
+                    f'<td><span class="badge badge-stale">PROTECTED</span></td>'
+                    f"<td><code>{_esc(rules_str)}</code></td>"
+                    f"<td>{_esc(bport.block_reason)}</td>"
+                    "</tr>"
+                )
+        else:
+            port_blocked_rows_html.append(
+                '<tr><td colspan="7" class="empty-cell">No LLDP Uplink Guard blocked ports recorded.</td></tr>'
+            )
+    else:
+        port_candidates_rows_html.append(
+            '<tr><td colspan="9" class="empty-cell">No Phase 4 Extreme port reclamation plan provided.</td></tr>'
+        )
+        port_blocked_rows_html.append(
+            '<tr><td colspan="7" class="empty-cell">No Phase 4 LLDP Uplink Guard audit records provided.</td></tr>'
+        )
+
+    # 7. Build Phase 5 Modern SoT Dual-Run Parity & Migration Readiness Scorecards Section
+    parity_meta_html = ""
+    parity_scorecard_rows_html: list[str] = []
+    parity_discrepancy_rows_html: list[str] = []
+    if resolved_parity is not None:
+        overall_rec_badge = _cutover_badge_class(
+            resolved_parity.overall_recommendation.value
+        )
+        parity_meta_html = (
+            '<div class="section-meta">'
+            f"<span><strong>Total Sites Evaluated:</strong> <code>{resolved_parity.total_sites}</code></span> "
+            f"<span><strong>Ready for Cutover:</strong> <code>{resolved_parity.ready_for_cutover_count}</code></span> "
+            f"<span><strong>Needs Remediation:</strong> <code>{resolved_parity.needs_remediation_count}</code></span> "
+            f"<span><strong>Blocked:</strong> <code>{resolved_parity.blocked_count}</code></span> "
+            f"<span><strong>Overall Parity:</strong> <code>{resolved_parity.overall_parity_percentage:.2f}%</code></span> "
+            f"<span><strong>Average Readiness Score:</strong> <code>{resolved_parity.average_readiness_score:.2f}%</code></span> "
+            f'<span class="badge {overall_rec_badge}">{_esc(resolved_parity.overall_recommendation.value)}</span>'
+            "</div>"
+        )
+        if resolved_parity.scorecards:
+            for sc in resolved_parity.scorecards:
+                rec_badge = _cutover_badge_class(sc.recommendation.value)
+                blockers_str = (
+                    "; ".join(sc.blocking_reasons)
+                    if sc.blocking_reasons
+                    else "None (100% Parity Verified)"
+                )
+                parity_scorecard_rows_html.append(
+                    "<tr>"
+                    f"<td><code>{_esc(sc.site_id)}</code></td>"
+                    f"<td>{_esc(sc.site_name)}</td>"
+                    f'<td class="num"><strong>{sc.readiness_score:.2f}%</strong></td>'
+                    f'<td class="num">{sc.parity_match_percentage:.2f}%</td>'
+                    f'<td><span class="badge {rec_badge}">{_esc(sc.recommendation.value)}</span></td>'
+                    f'<td class="num">{sc.matched_modern_items}/{sc.expected_golden_items}</td>'
+                    f'<td class="num">{len(sc.unwaived_discrepancies)} (waived: {sc.waived_discrepancy_count})</td>'
+                    f'<td class="num">{sc.unresolved_untracked_count}</td>'
+                    f"<td>{_esc(blockers_str)}</td>"
+                    "</tr>"
+                )
+                for pdisc in sc.discrepancies:
+                    parity_discrepancy_rows_html.append(
+                        "<tr>"
+                        f"<td><code>{_esc(pdisc.discrepancy_id)}</code></td>"
+                        f"<td><code>{_esc(pdisc.discrepancy_type.value)}</code></td>"
+                        f"<td><code>{_esc(pdisc.site_id)}</code></td>"
+                        f"<td><code>{_esc(pdisc.entity_type)}</code></td>"
+                        f"<td><code>{_esc(pdisc.item_identifier)}</code></td>"
+                        f"<td><code>{_esc(pdisc.attribute_name or '-')}</code></td>"
+                        f"<td><code>{_esc(pdisc.expected_value if pdisc.expected_value is not None else '-')}</code></td>"
+                        f"<td><code>{_esc(pdisc.actual_value if pdisc.actual_value is not None else '-')}</code></td>"
+                        f"<td>{_esc(pdisc.details or '-')}</td>"
+                        "</tr>"
+                    )
+        else:
+            parity_scorecard_rows_html.append(
+                '<tr><td colspan="9" class="empty-cell">No site migration readiness scorecards available.</td></tr>'
+            )
+        if not parity_discrepancy_rows_html:
+            parity_discrepancy_rows_html.append(
+                '<tr><td colspan="9" class="empty-cell">No dual-run parity discrepancies detected.</td></tr>'
+            )
+    else:
+        parity_scorecard_rows_html.append(
+            '<tr><td colspan="9" class="empty-cell">No Phase 5 Modern SoT parity report provided.</td></tr>'
+        )
+        parity_discrepancy_rows_html.append(
+            '<tr><td colspan="9" class="empty-cell">No Phase 5 dual-run parity discrepancies provided.</td></tr>'
+        )
+
+    # 8. Build Phase 6 APC UPS Fleet Health & Environmental Telemetry Section
+    ups_meta_html = ""
+    ups_rows_html: list[str] = []
+    if resolved_ups is not None:
+        ups_meta_html = (
+            '<div class="section-meta">'
+            f"<span><strong>Total UPS Units:</strong> <code>{resolved_ups.total_units}</code></span> "
+            f"<span><strong>Healthy:</strong> <code>{resolved_ups.healthy_count}</code></span> "
+            f"<span><strong>Warning:</strong> <code>{resolved_ups.warning_count}</code></span> "
+            f"<span><strong>Critical:</strong> <code>{resolved_ups.critical_count}</code></span> "
+            f"<span><strong>Unreachable:</strong> <code>{resolved_ups.unreachable_count}</code></span> "
+            f"<span><strong>Battery Replacement Needed:</strong> <code>{len(resolved_ups.battery_replacement_units)}</code></span> "
+            f"<span><strong>Low Runtime:</strong> <code>{len(resolved_ups.low_runtime_units)}</code></span> "
+            f"<span><strong>Thermal Alerts:</strong> <code>{len(resolved_ups.thermal_alert_units)}</code></span>"
+            "</div>"
+        )
+        if resolved_ups.records:
+            for urec in resolved_ups.records:
+                ubadge = _ups_status_badge_class(urec.status.value)
+                adv_str = ", ".join(urec.advisories) if urec.advisories else "NONE"
+                runtime_str = (
+                    f"{urec.runtime_remaining_minutes:.1f} min"
+                    if urec.runtime_remaining_minutes is not None
+                    else "-"
+                )
+                temp_str = (
+                    f"{urec.temperature_celsius:.1f} C"
+                    if urec.temperature_celsius is not None
+                    else "-"
+                )
+                load_str = (
+                    f"{urec.output_load_pct:.1f}%"
+                    if urec.output_load_pct is not None
+                    else "-"
+                )
+                ups_rows_html.append(
+                    "<tr>"
+                    f"<td><code>{_esc(urec.site_id)}</code></td>"
+                    f"<td><code>{_esc(urec.equipment_id)}</code></td>"
+                    f"<td>{_esc(urec.name)}</td>"
+                    f"<td><code>{_esc(urec.ip_address or '-')}</code></td>"
+                    f"<td>{_esc(urec.model or 'APC Smart-UPS')}</td>"
+                    f'<td><span class="badge {ubadge}">{_esc(urec.status.value)}</span></td>'
+                    f"<td><code>{_esc(urec.battery_status or '-')}</code></td>"
+                    f"<td><code>{'YES' if urec.needs_battery_replacement else 'NO'}</code></td>"
+                    f'<td class="num">{_esc(runtime_str)}</td>'
+                    f'<td class="num">{_esc(temp_str)}</td>'
+                    f'<td class="num">{_esc(load_str)}</td>'
+                    f"<td><code>{_esc(urec.output_status or '-')}</code></td>"
+                    f"<td><code>{_esc(adv_str)}</code></td>"
+                    "</tr>"
+                )
+        else:
+            ups_rows_html.append(
+                '<tr><td colspan="13" class="empty-cell">No APC UPS health records evaluated.</td></tr>'
+            )
+    else:
+        ups_rows_html.append(
+            '<tr><td colspan="13" class="empty-cell">No Phase 6 APC UPS fleet health telemetry report provided.</td></tr>'
+        )
+
+    # 9. Build Phase 6 ITSM Change-Ticket & Approval Governance Queue Section
+    itsm_rows_html: list[str] = []
+    if resolved_tickets:
+        for tkt in resolved_tickets:
+            tbadge = _approval_badge_class(tkt.approval_status.value)
+            sites_str = ", ".join(tkt.site_ids) if tkt.site_ids else "-"
+            itsm_rows_html.append(
+                "<tr>"
+                f"<td><code>{_esc(tkt.ticket_id)}</code></td>"
+                f"<td><code>{_esc(tkt.workflow_type.value)}</code></td>"
+                f"<td>{_esc(tkt.title)}</td>"
+                f"<td><code>{_esc(tkt.risk)}</code> / <code>{_esc(tkt.priority)}</code></td>"
+                f"<td><code>{_esc(tkt.cmdb_ci or '-')}</code></td>"
+                f"<td><code>{_esc(sites_str)}</code></td>"
+                f"<td><code>{_esc(tkt.artifact_id or '-')}</code></td>"
+                f"<td><code>{_esc(tkt.artifact_sha256 or '-')}</code></td>"
+                f'<td><span class="badge {tbadge}">{_esc(tkt.approval_status.value)}</span></td>'
+                f"<td>{_esc(tkt.approved_by or '-')}</td>"
+                "</tr>"
+            )
+    else:
+        itsm_rows_html.append(
+            '<tr><td colspan="10" class="empty-cell">No Phase 6 ITSM change tickets or incident payloads queued.</td></tr>'
         )
 
     cls_options_html = "".join(
@@ -753,6 +1236,22 @@ def generate_html_dashboard(
       <div class="kpi-label">Untracked Discrepancies</div>
       <div class="kpi-value" data-kpi="untracked-discrepancies">{untracked_discrepancies_count}</div>
     </div>
+    <div class="kpi-card">
+      <div class="kpi-label">Reclaimable Switch Ports</div>
+      <div class="kpi-value" data-kpi="reclaimable-ports">{reclaimable_ports_count} ({poe_watts_saved:.1f}W)</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">Sites Ready for Cutover</div>
+      <div class="kpi-value" data-kpi="migration-ready-sites" data-kpi-alias="sites-ready-for-cutover">{ready_cutover_sites_count}</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">APC UPS Health Alerts</div>
+      <div class="kpi-value" data-kpi="ups-critical-alerts" data-kpi-alias="ups-health-alerts">{ups_alerts_count}</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">ITSM Change Tickets</div>
+      <div class="kpi-value" data-kpi="itsm-tickets-count" data-kpi-alias="itsm-tickets">{itsm_tickets_count}</div>
+    </div>
   </div>
 
   <section id="site-subnet-health">
@@ -909,6 +1408,156 @@ def generate_html_dashboard(
     </div>
   </section>
 
+  <section id="port-reclamation-section">
+    <h2>5. Phase 4 Extreme Networks Switch Port &amp; PoE Reclamation</h2>
+    {port_plan_meta_html}
+    <h3>Eligible Stale Access Ports (Staged ExtremeXOS / VOSS Commands)</h3>
+    <div class="table-wrap">
+      <table id="port-reclamation-candidates-table">
+        <thead>
+          <tr>
+            <th>Site ID</th>
+            <th>Switch Device ID</th>
+            <th>Port Name</th>
+            <th class="num">Inactive Runs</th>
+            <th class="num">Inactive Days</th>
+            <th class="num">PoE Saved</th>
+            <th>ExtremeXOS Disable Commands</th>
+            <th>Extreme VOSS Disable Commands</th>
+            <th>1-Command Rollback</th>
+          </tr>
+        </thead>
+        <tbody>
+          {"".join(port_candidates_rows_html)}
+        </tbody>
+      </table>
+    </div>
+
+    <h3>LLDP Uplink Guard Protected Ports Audit</h3>
+    <div class="table-wrap">
+      <table id="port-reclamation-blocked-table">
+        <thead>
+          <tr>
+            <th>Site ID</th>
+            <th>Switch Device ID</th>
+            <th>Port Name</th>
+            <th>Port ID</th>
+            <th>Guard Status</th>
+            <th>Matched Safety Rules</th>
+            <th>Protection Reason</th>
+          </tr>
+        </thead>
+        <tbody>
+          {"".join(port_blocked_rows_html)}
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section id="migration-parity-section">
+    <div id="modern-sot-parity-section">
+      <h2>6. Phase 5 Modern SoT Dual-Run Parity &amp; Migration Readiness Scorecards</h2>
+      {parity_meta_html}
+      <h3>Per-Site Migration Readiness Scorecards</h3>
+      <div class="table-wrap">
+        <table id="parity-scorecards-table">
+          <thead>
+            <tr>
+              <th>Site ID</th>
+              <th>Site Name</th>
+              <th class="num">Readiness Score</th>
+              <th class="num">Parity Match</th>
+              <th>Cutover Recommendation</th>
+              <th class="num">Matched / Expected</th>
+              <th class="num">Parity Discrepancies</th>
+              <th class="num">Unresolved Shadow IT</th>
+              <th>Blocking Reasons</th>
+            </tr>
+          </thead>
+          <tbody>
+            {"".join(parity_scorecard_rows_html)}
+          </tbody>
+        </table>
+      </div>
+
+      <h3>Dual-Run Parity Discrepancies</h3>
+      <div class="table-wrap">
+        <table id="parity-discrepancies-table">
+          <thead>
+            <tr>
+              <th>Discrepancy ID</th>
+              <th>Discrepancy Type</th>
+              <th>Site ID</th>
+              <th>Entity Type</th>
+              <th>Item Identifier</th>
+              <th>Attribute</th>
+              <th>Expected</th>
+              <th>Actual</th>
+              <th>Details</th>
+            </tr>
+          </thead>
+          <tbody>
+            {"".join(parity_discrepancy_rows_html)}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <section id="ups-health-section">
+    <h2>7. Phase 6 APC UPS Fleet Health &amp; Environmental Telemetry</h2>
+    {ups_meta_html}
+    <div class="table-wrap">
+      <table id="ups-health-table">
+        <thead>
+          <tr>
+            <th>Site ID</th>
+            <th>Equipment ID</th>
+            <th>UPS Hostname</th>
+            <th>IP Address</th>
+            <th>Model</th>
+            <th>Health Status</th>
+            <th>Battery Status</th>
+            <th>Replace Battery</th>
+            <th class="num">Runtime Remaining</th>
+            <th class="num">Temp</th>
+            <th class="num">Output Load</th>
+            <th>Output Status</th>
+            <th>Active Advisories</th>
+          </tr>
+        </thead>
+        <tbody>
+          {"".join(ups_rows_html)}
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section id="itsm-governance-section">
+    <h2>8. Phase 6 ITSM Change-Ticket &amp; Approval Governance Queue</h2>
+    <div class="table-wrap">
+      <table id="itsm-tickets-table">
+        <thead>
+          <tr>
+            <th>Ticket ID</th>
+            <th>Workflow Type</th>
+            <th>Title / Short Description</th>
+            <th>Risk / Priority</th>
+            <th>CMDB CI</th>
+            <th>Sites</th>
+            <th>Artifact ID</th>
+            <th>Artifact SHA-256 Digest</th>
+            <th>Approval Status</th>
+            <th>Approved By</th>
+          </tr>
+        </thead>
+        <tbody>
+          {"".join(itsm_rows_html)}
+        </tbody>
+      </table>
+    </div>
+  </section>
+
   <script>
     (function () {{
       var clsSelect = document.getElementById("filter-classification");
@@ -976,7 +1625,7 @@ class HtmlDashboardGenerator:
 
     DEFAULT_FILENAME = DEFAULT_DASHBOARD_FILENAME
 
-    def generate(
+    def render(
         self,
         results: Sequence[ValidationResult | Mapping[str, Any]],
         *,
@@ -1000,6 +1649,52 @@ class HtmlDashboardGenerator:
         subnet_utilization: Optional[
             Sequence[SubnetUtilizationSummary | Mapping[str, Any]]
         ] = None,
+        port_reclamation_plan: Optional[
+            PortReclamationPlan | Mapping[str, Any]
+        ] = None,
+        port_plan: Optional[PortReclamationPlan | Mapping[str, Any]] = None,
+        migration_parity_report: Optional[
+            ParityValidationReport
+            | SiteMigrationReadinessScorecard
+            | Sequence[SiteMigrationReadinessScorecard | Mapping[str, Any]]
+            | Mapping[str, Any]
+        ] = None,
+        parity_report: Optional[
+            ParityValidationReport
+            | SiteMigrationReadinessScorecard
+            | Sequence[SiteMigrationReadinessScorecard | Mapping[str, Any]]
+            | Mapping[str, Any]
+        ] = None,
+        migration_scorecards: Optional[
+            ParityValidationReport
+            | SiteMigrationReadinessScorecard
+            | Sequence[SiteMigrationReadinessScorecard | Mapping[str, Any]]
+            | Mapping[str, Any]
+        ] = None,
+        ups_health_report: Optional[
+            UpsFleetHealthReport
+            | UpsHealthRecord
+            | Sequence[UpsHealthRecord | Mapping[str, Any]]
+            | Mapping[str, Any]
+        ] = None,
+        ups_report: Optional[
+            UpsFleetHealthReport
+            | UpsHealthRecord
+            | Sequence[UpsHealthRecord | Mapping[str, Any]]
+            | Mapping[str, Any]
+        ] = None,
+        itsm_tickets: Optional[
+            Sequence[ItsmTicketRequest | Mapping[str, Any]]
+            | Mapping[str, Any]
+            | ItsmTicketRequest
+            | InMemoryItsmSink
+        ] = None,
+        tickets: Optional[
+            Sequence[ItsmTicketRequest | Mapping[str, Any]]
+            | Mapping[str, Any]
+            | ItsmTicketRequest
+            | InMemoryItsmSink
+        ] = None,
         output_path: Optional[Path | str] = None,
         generated_at: Optional[datetime | str] = None,
         title: str = DEFAULT_DASHBOARD_TITLE,
@@ -1014,10 +1709,21 @@ class HtmlDashboardGenerator:
             reconciliation_report=reconciliation_report,
             reconciliation=reconciliation,
             subnet_utilization=subnet_utilization,
+            port_reclamation_plan=port_reclamation_plan,
+            port_plan=port_plan,
+            migration_parity_report=migration_parity_report,
+            parity_report=parity_report,
+            migration_scorecards=migration_scorecards,
+            ups_health_report=ups_health_report,
+            ups_report=ups_report,
+            itsm_tickets=itsm_tickets,
+            tickets=tickets,
             output_path=output_path,
             generated_at=generated_at,
             title=title,
         )
+
+    generate = render
 
     def write(
         self,
@@ -1044,6 +1750,52 @@ class HtmlDashboardGenerator:
         subnet_utilization: Optional[
             Sequence[SubnetUtilizationSummary | Mapping[str, Any]]
         ] = None,
+        port_reclamation_plan: Optional[
+            PortReclamationPlan | Mapping[str, Any]
+        ] = None,
+        port_plan: Optional[PortReclamationPlan | Mapping[str, Any]] = None,
+        migration_parity_report: Optional[
+            ParityValidationReport
+            | SiteMigrationReadinessScorecard
+            | Sequence[SiteMigrationReadinessScorecard | Mapping[str, Any]]
+            | Mapping[str, Any]
+        ] = None,
+        parity_report: Optional[
+            ParityValidationReport
+            | SiteMigrationReadinessScorecard
+            | Sequence[SiteMigrationReadinessScorecard | Mapping[str, Any]]
+            | Mapping[str, Any]
+        ] = None,
+        migration_scorecards: Optional[
+            ParityValidationReport
+            | SiteMigrationReadinessScorecard
+            | Sequence[SiteMigrationReadinessScorecard | Mapping[str, Any]]
+            | Mapping[str, Any]
+        ] = None,
+        ups_health_report: Optional[
+            UpsFleetHealthReport
+            | UpsHealthRecord
+            | Sequence[UpsHealthRecord | Mapping[str, Any]]
+            | Mapping[str, Any]
+        ] = None,
+        ups_report: Optional[
+            UpsFleetHealthReport
+            | UpsHealthRecord
+            | Sequence[UpsHealthRecord | Mapping[str, Any]]
+            | Mapping[str, Any]
+        ] = None,
+        itsm_tickets: Optional[
+            Sequence[ItsmTicketRequest | Mapping[str, Any]]
+            | Mapping[str, Any]
+            | ItsmTicketRequest
+            | InMemoryItsmSink
+        ] = None,
+        tickets: Optional[
+            Sequence[ItsmTicketRequest | Mapping[str, Any]]
+            | Mapping[str, Any]
+            | ItsmTicketRequest
+            | InMemoryItsmSink
+        ] = None,
         generated_at: Optional[datetime | str] = None,
         title: str = DEFAULT_DASHBOARD_TITLE,
     ) -> Path:
@@ -1060,6 +1812,15 @@ class HtmlDashboardGenerator:
             reconciliation_report=reconciliation_report,
             reconciliation=reconciliation,
             subnet_utilization=subnet_utilization,
+            port_reclamation_plan=port_reclamation_plan,
+            port_plan=port_plan,
+            migration_parity_report=migration_parity_report,
+            parity_report=parity_report,
+            migration_scorecards=migration_scorecards,
+            ups_health_report=ups_health_report,
+            ups_report=ups_report,
+            itsm_tickets=itsm_tickets,
+            tickets=tickets,
             output_path=target,
             generated_at=generated_at,
             title=title,

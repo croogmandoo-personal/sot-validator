@@ -629,6 +629,11 @@ def generate_all_reports(
     approval_manifest: Optional[Any] = None,
     reconciliation_report: Optional[Any] = None,
     streaks: Optional[Any] = None,
+    port_reclamation_plan: Optional[Any] = None,
+    migration_parity_report: Optional[Any] = None,
+    parity_report: Optional[Any] = None,
+    ups_health_report: Optional[Any] = None,
+    itsm_tickets: Optional[Any] = None,
 ) -> dict[str, Path]:
     """Write JSON, CSV, Markdown, and Phase 2 dry-run remediation plan files to `output_dir`."""
     out_dir = Path(output_dir)
@@ -693,6 +698,14 @@ def generate_all_reports(
             approval_manifest=approval_manifest,
             streaks=streaks,
             reconciliation_report=reconciliation_report,
+            port_reclamation_plan=port_reclamation_plan,
+            migration_parity_report=(
+                migration_parity_report
+                if migration_parity_report is not None
+                else parity_report
+            ),
+            ups_health_report=ups_health_report,
+            itsm_tickets=itsm_tickets,
             output_path=html_path,
             generated_at=report_dt,
         )

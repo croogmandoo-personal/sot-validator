@@ -8,6 +8,7 @@ from sot_validator.migration.exporter import (
     SUPPORTED_TARGET_PLATFORMS,
     GoldenInventoryFilter,
     ModernSoTExporter,
+    TargetPlatform,
     slugify,
 )
 from sot_validator.migration.parity import (
@@ -17,10 +18,17 @@ from sot_validator.migration.parity import (
     CutoverRecommendation,
     DualRunParityChecker,
     MigrationParityReport,
+    ModernSoTParityValidator,
     ParityDiscrepancy,
     ParityDiscrepancyType,
+    ParityValidationReport,
     SiteMigrationReadinessScorecard,
 )
+
+ModernSoTPlatform = TargetPlatform
+NETBOX_CSV_SCHEMAS = CSV_COLUMNS_BY_ENTITY
+NAUTOBOT_CSV_SCHEMAS = CSV_COLUMNS_BY_ENTITY
+slugify_identifier = slugify
 
 __all__ = [
     "ALL_CUTOVER_RECOMMENDATIONS",
@@ -32,10 +40,17 @@ __all__ = [
     "GoldenInventoryFilter",
     "MigrationParityReport",
     "ModernSoTExporter",
+    "ModernSoTParityValidator",
+    "ModernSoTPlatform",
+    "NAUTOBOT_CSV_SCHEMAS",
+    "NETBOX_CSV_SCHEMAS",
     "PARITY_ENTITY_COLLECTIONS",
     "ParityDiscrepancy",
     "ParityDiscrepancyType",
+    "ParityValidationReport",
     "SUPPORTED_TARGET_PLATFORMS",
     "SiteMigrationReadinessScorecard",
+    "TargetPlatform",
     "slugify",
+    "slugify_identifier",
 ]

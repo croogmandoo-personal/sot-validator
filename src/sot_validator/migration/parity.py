@@ -427,14 +427,29 @@ class MigrationParityReport:
         default_factory=lambda: datetime.now(timezone.utc)
     )
 
-    def __post_init__(self) -> None:
-        self.generated_at = _resolve_timestamp(self.generated_at)
+    def __init__(
+        self,
+        scorecards: Optional[
+            Sequence[SiteMigrationReadinessScorecard | Mapping[str, Any]]
+        ] = None,
+        generated_at: Optional[datetime | str] = None,
+        *,
+        evaluated_at: Optional[datetime | str] = None,
+    ) -> None:
+        resolved_ts = (
+            generated_at if generated_at is not None else evaluated_at
+        )
+        self.generated_at = _resolve_timestamp(resolved_ts)
         self.scorecards = [
             s
             if isinstance(s, SiteMigrationReadinessScorecard)
             else SiteMigrationReadinessScorecard.from_dict(s)
-            for s in (self.scorecards or [])
+            for s in (scorecards or [])
         ]
+
+    @property
+    def evaluated_at(self) -> datetime:
+        return self.generated_at
 
     @property
     def total_sites(self) -> int:
@@ -472,6 +487,20 @@ class MigrationParityReport:
             sum(s.readiness_score for s in self.scorecards) / len(self.scorecards),
             2,
         )
+
+    @property
+    def overall_readiness_score(self) -> float:
+        return self.average_readiness_score
+
+    @property
+    def overall_recommendation(self) -> CutoverRecommendation:
+        if not self.scorecards:
+            return CutoverRecommendation.BLOCKED
+        if self.blocked_count > 0:
+            return CutoverRecommendation.BLOCKED
+        if self.needs_remediation_count > 0:
+            return CutoverRecommendation.NEEDS_REMEDIATION
+        return CutoverRecommendation.READY_FOR_CUTOVER
 
     @property
     def overall_parity_percentage(self) -> float:
@@ -2019,3 +2048,21 @@ class DualRunParityChecker:
     ) -> MigrationParityReport:
         """Alias for evaluate_sites returning a MigrationParityReport."""
         return self.evaluate_sites(golden_or_sites, modern_bundle, **kwargs)
+
+
+ParityValidationReport = MigrationParityReport
+ModernSoTParityValidator = DualRunParityChecker
+
+__all__ = [
+    "ALL_CUTOVER_RECOMMENDATIONS",
+    "ALL_PARITY_DISCREPANCY_TYPES",
+    "CutoverRecommendation",
+    "DualRunParityChecker",
+    "MigrationParityReport",
+    "ModernSoTParityValidator",
+    "PARITY_ENTITY_COLLECTIONS",
+    "ParityDiscrepancy",
+    "ParityDiscrepancyType",
+    "ParityValidationReport",
+    "SiteMigrationReadinessScorecard",
+]
