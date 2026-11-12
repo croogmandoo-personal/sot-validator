@@ -47,9 +47,8 @@ _IFACE_NAMED_VLAN_RE = re.compile(r"^(?:vlan|br|vl|v)[._-]?(\d+)$", re.IGNORECAS
 _DIGITS_RE = re.compile(r"(\d+)")
 _SNMP_TYPE_PREFIX_RE = re.compile(r"^[A-Za-z][A-Za-z0-9-]*:\s+")
 _SNMP_TYPE_NAMES: dict[int, str] = {1: "OTHER", 2: "INVALID", 3: "DYNAMIC", 4: "STATIC"}
-_EXOS_STATIC_TOKENS: frozenset[str] = frozenset(
-    {"YES", "NO", "STATIC", "DYNAMIC", "1", "0"}
-)
+_EXOS_STATIC_TOKENS: frozenset[str] = frozenset({"YES", "NO", "STATIC", "DYNAMIC"})
+_EXOS_NUMERIC_STATIC_TOKENS: frozenset[str] = frozenset({"1", "0"})
 _VOSS_TYPES: frozenset[str] = frozenset(
     {"DYNAMIC", "STATIC", "LOCAL", "INVALID", "OTHER"}
 )
@@ -530,14 +529,14 @@ class RouterTableParsers:
             lowered = {t.lower() for t in tokens}
             if "dev" in lowered or "lladdr" in lowered:
                 return cls._parse_ip_neigh_tokens
-            if (
-                len(tokens) >= 4
-                and tokens[2].isdigit()
-                and tokens[3].upper() in _EXOS_STATIC_TOKENS
-            ):
+            exos_shape = len(tokens) >= 4 and tokens[2].isdigit()
+            if exos_shape and tokens[3].upper() in _EXOS_STATIC_TOKENS:
                 return cls._parse_exos_tokens
+            # VOSS before numeric EXOS static flags: a VOSS port can be a bare "1"
             if len(tokens) >= 5 and tokens[4].upper() in _VOSS_TYPES:
                 return cls._parse_voss_tokens
+            if exos_shape and tokens[3] in _EXOS_NUMERIC_STATIC_TOKENS:
+                return cls._parse_exos_tokens
             return None
         if len(tokens) >= 3 and _is_ipv4(tokens[1]):
             return cls._parse_exos_tokens
@@ -616,13 +615,13 @@ class RouterTableParsers:
                 index = cls._split_arp_index(oid[len(prefix) + 1 :], physical=physical)
                 if index is None:
                     break
+                # Net-address rows only register the index; MAC/type rows fill it in
                 entry = entries.setdefault(index, {})
                 if kind == "mac":
-                    entry.setdefault("mac", _snmp_text(raw_value))
+                    if entry.get("mac") is None:
+                        entry["mac"] = _snmp_text(raw_value)
                 elif kind == "type":
                     entry["type"] = _snmp_type_state(raw_value)
-                else:
-                    entry.setdefault("mac", None)
                 break
 
         records: list[RouterArpRecord] = []

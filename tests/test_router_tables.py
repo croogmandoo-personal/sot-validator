@@ -301,6 +301,27 @@ def test_parse_cli_arp_auto_detects_formats() -> None:
     assert {r.router_id for r in mixed} == {"mixed"}
 
 
+def test_parse_cli_arp_voss_numeric_port_and_exos_numeric_static() -> None:
+    voss = RouterTableParsers.parse_cli_arp(
+        "10.42.20.21     00c0.b711.2233     20    1      STATIC   0\n"
+    )
+    assert len(voss) == 1
+    assert voss[0].interface == "1"
+    assert voss[0].vlan_id == "20"
+    assert voss[0].state == "STATIC"
+    assert voss == RouterTableParsers.parse_voss_arp(
+        "10.42.20.21     00c0.b711.2233     20    1      STATIC   0\n"
+    )
+
+    exos = RouterTableParsers.parse_cli_arp(
+        "10.42.10.15  00:04:96:aa:bb:cc  5  1  Default  10  1:24\n"
+    )
+    assert len(exos) == 1
+    assert exos[0].state == "STATIC"
+    assert exos[0].interface == "1:24"
+    assert exos[0].vlan_id == "10"
+
+
 SNMP_OIDS = {
     "1.3.6.1.2.1.4.22.1.2.12.10.42.10.25": "00:04:96:aa:bb:cc",
     "1.3.6.1.2.1.4.22.1.3.12.10.42.10.25": "10.42.10.25",
@@ -365,6 +386,23 @@ def test_parse_snmp_arp_oid_walk_dict_and_json() -> None:
     )
     assert from_json == records
     assert RouterTableParsers.parse_snmp_arp("") == []
+
+
+def test_parse_snmp_arp_oid_walk_order_independent() -> None:
+    net_first = {
+        "1.3.6.1.2.1.4.22.1.3.5.10.42.10.25": "IpAddress: 10.42.10.25",
+        "1.3.6.1.2.1.4.22.1.2.5.10.42.10.25": "Hex-STRING: 00 04 96 AA BB CC",
+        "1.3.6.1.2.1.4.22.1.4.5.10.42.10.25": "INTEGER: dynamic(3)",
+        "1.3.6.1.2.1.4.22.1.3.6.10.42.20.40": "10.42.20.40",
+        "1.3.6.1.2.1.4.35.1.4.6.1.4.10.42.20.40": "00:c0:b7:01:02:03",
+    }
+    records = RouterTableParsers.parse_snmp_arp(net_first)
+    assert [(r.ip, r.mac_address, r.state) for r in records] == [
+        ("10.42.10.25", "00:04:96:aa:bb:cc", "DYNAMIC"),
+        ("10.42.20.40", "00:c0:b7:01:02:03", "REACHABLE"),
+    ]
+    reversed_oids = dict(reversed(list(net_first.items())))
+    assert RouterTableParsers.parse_snmp_arp(reversed_oids) == records
 
 
 def test_parse_snmp_arp_record_lists() -> None:
