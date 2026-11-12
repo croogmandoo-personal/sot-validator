@@ -1,5 +1,14 @@
 """Scoped /16-to-/24 subnet discovery and Site snapshot bootstrapper package."""
 
+from sot_validator.discovery.monitor import (
+    DriftAlertDispatcher,
+    DriftAlertTarget,
+    DriftDispatchResult,
+    ScanDriftEvent,
+    ScanDriftEventType,
+    SnapshotDiffEngine,
+    SnapshotDiffReport,
+)
 from sot_validator.discovery.router_tables import (
     DhcpLeaseRecord,
     RouterArpDhcpCollector,
@@ -21,9 +30,16 @@ __all__ = [
     "DhcpLeaseRecord",
     "DiscoveredHost",
     "DiscoveryConfig",
+    "DriftAlertDispatcher",
+    "DriftAlertTarget",
+    "DriftDispatchResult",
     "RouterArpDhcpCollector",
     "RouterArpRecord",
     "RouterTableParsers",
+    "ScanDriftEvent",
+    "ScanDriftEventType",
+    "SnapshotDiffEngine",
+    "SnapshotDiffReport",
     "SubnetDiscoveryScanner",
     "parse_ip_neigh_output",
 ]
