@@ -40,6 +40,12 @@ is in the main checkout; your one file goes there.
   into the DOM, URLs or meta tags.
 - **Data exposure**: responses, logs or public documents that leak ids, emails,
   tokens or internal errors.
+- **Secret-bearing failures**: tokens, cookies, bearer headers and webhook URLs
+  that contain whitespace or control characters (common when read from a file)
+  must not leak through exception messages. Stdlib `http.client` / cookie errors
+  often embed a `repr` of the bad header; redacting the raw secret is not enough.
+  Prefer rejecting such values at the boundary, or replace those errors with a
+  class-name-only reason before they reach logs, `detail`, or HTTP bodies.
 - **Payments and identity**: anything that can grant access, skip a webhook
   signature check, or change who a user is.
 - **Abuse**: public endpoints that can be spammed without a rate limit.

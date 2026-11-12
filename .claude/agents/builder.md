@@ -69,6 +69,26 @@ passes.
 Then verify every acceptance criterion and record the evidence in build.md: the
 command you ran and its result, or what the page showed.
 
+Before `STATUS: READY`, probe the adversarial cases reviewers keep finding. Add a
+regression test for each one you can hit:
+
+- **Order / shape variance:** input maps, OID walks, CSV/JSON field order, and
+  optional keys in both orders; stringly-typed values (`"false"`, `"0"`) must not
+  become truthy by accident.
+- **Normalizers:** reject IPv4-looking strings as MACs, malformed MAC groups, and
+  other lookalikes; do not invent data from a fallback the spec does not allow.
+- **Cross-record correlation:** name/IP/ID matches must not rewrite a record from
+  another platform or a physical host; prefer `NOT_APPLICABLE` / a new child over
+  a silent overwrite.
+- **Secrets in errors:** tokens and URLs with trailing newlines or control
+  characters must be rejected or fully redacted in exception/`detail`/log text
+  (stdlib header errors often embed a `repr` of the secret).
+- **Docs the project requires:** if `AGENTS.md` / architecture docs list modules
+  or CLI commands, update those same lists when you add a module or command.
+- **UI at phone width:** if the change is visual, check ~390px for readable type,
+  horizontal scroll instead of shrink-to-unreadable, contrast on status colours,
+  and keyboard reachability for new controls.
+
 - Never run a command that rewrites files across the repo, such as a lint
   `--fix` over everything.
 - For criteria you can see on a page, start the dev server from AGENTS.md in the

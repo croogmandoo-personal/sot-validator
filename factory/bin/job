@@ -70,7 +70,13 @@ def now():
 
 
 def run(cmd, cwd=REPO, check=True):
-    res = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True)
+    # gh colors JSON when FORCE_COLOR or CLICOLOR_FORCE is set, and then
+    # gh_json cannot parse it. Factory calls always want plain output.
+    env = os.environ.copy()
+    env.pop("FORCE_COLOR", None)
+    env.pop("CLICOLOR_FORCE", None)
+    env["NO_COLOR"] = "1"
+    res = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, env=env)
     if check and res.returncode != 0:
         raise Refused(f"`{' '.join(cmd)}` failed: {(res.stderr or res.stdout).strip()}")
     return res
@@ -517,18 +523,33 @@ def slugify(title):
     return "-".join(words) or "issue"
 
 
+def parse_dependency_numbers(chunk):
+    """Issue numbers from a Depends-on / Blocked-by clause, including #61-#66 ranges."""
+    nums = []
+    for a, b in re.findall(r"#(\d+)\s*[–-]\s*#?(\d+)", chunk):
+        lo, hi = int(a), int(b)
+        nums.extend(range(min(lo, hi), max(lo, hi) + 1))
+    nums.extend(int(n) for n in re.findall(r"#(\d+)", chunk))
+    return sorted(set(nums))
+
+
 def unmet_dependencies(body, open_numbers, jobs):
     """Return list of issue numbers from 'Depends on #N' / 'Blocked by #N' that are not yet closed/merged."""
     if not body:
         return []
     deps = []
     for m in re.finditer(r"(?:depends\s+on|blocked\s+by)\s*[:\-]?\s*([#\d,\s–\-and]+)", body, re.I):
-        for num_str in re.findall(r"#(\d+)", m.group(1)):
-            dep = int(num_str)
+        for dep in parse_dependency_numbers(m.group(1)):
             j = jobs.get(dep)
             if dep in open_numbers and (not j or j["stage"] != "merged"):
                 deps.append(dep)
     return sorted(set(deps))
+
+
+def open_issue_numbers():
+    """All open issue numbers in the repo (any label). Used for Depends-on checks."""
+    return {i["number"] for i in gh_json(
+        "issue", "list", "--state", "open", "--limit", "200", "--json", "number")}
 
 
 def cmd_create(number):
@@ -544,6 +565,11 @@ def cmd_create(number):
         die(f"issue #{number} is {issue['state'].lower()}")
     if LABELS["queue"] not in {l["name"] for l in issue["labels"]}:
         die(f"issue #{number} isn't labeled {LABELS['queue']}")
+    jobs = {j["issue"]: j for j in all_jobs()}
+    unmet = unmet_dependencies(issue.get("body") or "", open_issue_numbers(), jobs)
+    if unmet:
+        die(f"issue #{number} is blocked on {', '.join(f'#{d}' for d in unmet)}; "
+            f"wait until those are closed/merged, or remove Depends on / Blocked by")
     JOBS.mkdir(parents=True, exist_ok=True)
     numbers = [int(p.name.split("-")[0]) for p in JOBS.iterdir() if p.name[:3].isdigit()]
     job_id = f"{max(numbers, default=0) + 1:03d}-{slugify(issue['title'])}"
@@ -573,12 +599,13 @@ def cmd_queue():
     issues = gh_json("issue", "list", "--label", LABELS["queue"], "--state", "open",
                      "--limit", "200", "--json", "number,title,body")
     open_numbers = {i["number"] for i in issues}
+    open_any = open_issue_numbers()
     running_rows, replied_rows, new_rows, other_rows = [], [], [], []
     for issue in sorted(issues, key=lambda i: i["number"]):
         n = issue["number"]
         j = jobs.get(n)
         if not j:
-            unmet = unmet_dependencies(issue.get("body", ""), open_numbers, jobs)
+            unmet = unmet_dependencies(issue.get("body", ""), open_any, jobs)
             if unmet:
                 other_rows.append(("wait", n, "-", "blocked", f"waiting on {', '.join(f'#{d}' for d in unmet)}"))
             else:
