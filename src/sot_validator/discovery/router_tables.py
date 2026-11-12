@@ -36,7 +36,7 @@ _MAC_NULL_TOKENS: frozenset[str] = frozenset(
 )
 _ZERO_MAC = "00:00:00:00:00:00"
 _MAC_OCTET_RE = re.compile(r"^[0-9a-f]{1,2}$")
-_MAC_GROUP_RE = re.compile(r"^[0-9a-f]{1,4}$")
+_MAC_GROUP_RE = re.compile(r"^[0-9a-f]{4}$")
 _HEX12_RE = re.compile(r"^[0-9a-f]{12}$")
 _NUMERIC_RE = re.compile(r"^-?\d+(?:\.\d+)?$")
 _ISC_TS_RE = re.compile(
@@ -106,7 +106,7 @@ def _normalize_router_mac(value: Any) -> Optional[str]:
     elif "." in cleaned:
         groups = cleaned.split(".")
         if len(groups) == 3 and all(_MAC_GROUP_RE.match(g) for g in groups):
-            hex_digits = "".join(g.zfill(4) for g in groups)
+            hex_digits = "".join(groups)
     elif _HEX12_RE.match(cleaned):
         hex_digits = cleaned
 
@@ -924,7 +924,12 @@ def _arp_rank(record: RouterArpRecord) -> tuple[bool, int, float]:
 
 
 def _lease_rank(lease: DhcpLeaseRecord) -> tuple[bool, float]:
-    return lease.hostname is not None, _timestamp_rank(lease.lease_expires_at)
+    # A lease without an expiry is infinite, so it outranks any finite expiry
+    expires = lease.lease_expires_at
+    return (
+        lease.hostname is not None,
+        expires.timestamp() if expires is not None else float("inf"),
+    )
 
 
 def _ip_slug(ip: str) -> str:

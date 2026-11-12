@@ -92,7 +92,15 @@ def test_router_arp_record_rejects_invalid_values() -> None:
     for bad_ip in ("", "10.42.10.300", "fe80::1", "not-an-ip"):
         with pytest.raises(ValueError):
             RouterArpRecord(ip=bad_ip)
-    for bad_mac in ("zz:zz:zz:zz:zz:zz", "00:04:96:01:02", "0004.9601", "12345"):
+    for bad_mac in (
+        "zz:zz:zz:zz:zz:zz",
+        "00:04:96:01:02",
+        "0004.9601",
+        "12345",
+        "1.2.3",
+        "00.04.96",
+        "004.9601.0203",
+    ):
         with pytest.raises(ValueError):
             RouterArpRecord(ip="10.42.10.5", mac_address=bad_mac)
     with pytest.raises(ValueError):
@@ -656,6 +664,16 @@ def test_collector_indexes_and_prefers_best_records() -> None:
     assert collector.arp_by_ip["10.42.10.25"].mac_address == "00:04:96:00:00:03"
     assert collector.arp_by_ip["10.42.10.26"].state == "FAILED"
     assert collector.leases_by_ip["10.42.10.25"].hostname == "new-name"
+
+    # An infinite lease (no expiry) is the latest, so it beats a finite one
+    collector.add_dhcp_leases(
+        [
+            DhcpLeaseRecord(ip="10.42.10.50", hostname="a", lease_expires_at=1700000000),
+            DhcpLeaseRecord(ip="10.42.10.50", hostname="b", lease_expires_at="infinite"),
+            DhcpLeaseRecord(ip="10.42.10.50", hostname="c", lease_expires_at=1800000000),
+        ]
+    )
+    assert collector.leases_by_ip["10.42.10.50"].hostname == "b"
 
     # A worse record added later does not replace the indexed one
     collector.add_arp_records([RouterArpRecord(ip="10.42.10.25", state="FAILED")])
