@@ -16,7 +16,7 @@
   - `signals/` — Passive (`arp.py`, `port_state.py`, `last_seen.py`), `/24`-scoped active (`icmp.py`, `management.py`), multi-vCenter (`hypervisor.py`), Phase 4 AD/DNS/DHCP (`directory_dns.py`), Phase 6 APC UPS telemetry (`ups_health.py`), and Phase 10–12 Proxmox VE `:8006` / Docker-Portainer `:9000` guest & container (`proxmox_containers.py`) collectors.
   - `classifier/` — Deterministic multi-signal `ClassificationEngine` and `ClassificationPolicy`.
   - `reporting/` — Multi-format report generators (`JSON`, `CSV`, `Markdown`, and interactive `HTML` operations dashboard).
-  - `history/` — Phase 2 multi-run validation history store, stale streak tracker, and state-drift analyzer.
+  - `history/` — Phase 2 multi-run validation history store, stale streak tracker, and state-drift analyzer. The SQLite ledger is schema-versioned via `PRAGMA user_version` with ordered `_MIGRATIONS` applied on open (newer databases are refused with `HistorySchemaVersionError`); add schema changes as new migrations, never by editing migration 1.
   - `remediation/` — Phase 1/2 dry-run action plans, quarantine graduation policies, SHA-256 signed approval manifests, gated remediation executor with rollback journal, and Phase 4 Extreme switch port/PoE reclamation planner (`port_reclamation.py`).
   - `reconciliation/` — Phase 3 reverse discovery & untracked inventory ("Shadow IT") reconciler and SoT import template generator.
   - `campaign/` — Phase 3 multi-site rolling campaign orchestrator, WAN/vCenter outage circuit breakers, and alert sinks.
