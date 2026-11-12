@@ -633,3 +633,87 @@ def test_enrich_site_with_guests_and_topology_hosts_vm_edges() -> None:
     assert ("eq-pve-01", "eq-discovered-51") in hosts_vm_edges
     assert ("eq-pve-02", "site-42-pve-lxc-102") in hosts_vm_edges
     assert ("eq-pve-01", "site-42-ct-portainer") in hosts_vm_edges
+
+
+def test_parse_mac_rejects_ip_strings_and_container_unpublished_ports() -> None:
+    assert is_proxmox_mac("192.168.100.100") is False
+    guest = ProxmoxGuestRecord(
+        vmid=120,
+        name="ip-noise",
+        guest_type="lxc",
+        node="pve-01",
+        mac_addresses=["192.168.100.100", "fd00:1234::5678", "BC:24:11:00:01:20"],
+    )
+    assert guest.mac_addresses == ["bc:24:11:00:01:20"]
+
+    exposed_only = ContainerEndpointRecord.from_dict(
+        {
+            "Id": "feedface0001",
+            "Names": ["/nginx"],
+            "Image": "nginx:latest",
+            "State": "running",
+            "Ports": [
+                {"PrivatePort": 80, "Type": "tcp"},
+                {"IP": "0.0.0.0", "PrivatePort": 443, "PublicPort": 8443, "Type": "tcp"},
+            ],
+        }
+    )
+    assert exposed_only.published_ports == [8443]
+    snap = ProxmoxClusterSnapshot(containers=[exposed_only])
+    assert snap.find_containers(port=80) == []
+    assert snap.find_containers(port=8443)[0].name == "nginx"
+
+    assert ContainerEndpointRecord(
+        container_id="feedface0002",
+        name="web",
+        image="nginx",
+        published_ports="0.0.0.0:8080->80/tcp, 9000/tcp",
+    ).published_ports == [8080]
+
+
+def test_evaluate_and_enrich_ignore_vmware_vm_sharing_proxmox_vmid() -> None:
+    snap = ProxmoxClusterSnapshot.from_dict(
+        {
+            "data": [
+                {"type": "node", "node": "pve-01", "ip": "10.42.10.21"},
+                {"type": "lxc", "vmid": 110, "name": "nginx-proxy", "node": "pve-01", "status": "running"},
+            ],
+        }
+    )
+    collector = ProxmoxContainerCollector(snapshot=snap)
+
+    vmware_vm = Equipment(
+        equipment_id="eq-app-vm-110",
+        site_id="site-42",
+        name="app-vm-110",
+        category=EquipmentCategory.VM,
+        assigned_ips=["10.42.20.110"],
+        hypervisor_id="vcenter-01",
+        power_state="poweredOn",
+    )
+    sig = collector.evaluate(vmware_vm)
+    assert sig.status is SignalStatus.NOT_APPLICABLE
+
+    vmware_server = Equipment(
+        equipment_id="eq-app-110",
+        site_id="site-42",
+        name="ct-110",
+        category=EquipmentCategory.SERVER,
+        hypervisor_id="vcenter-01",
+    )
+    pve_host = Equipment(
+        equipment_id="eq-pve-01",
+        site_id="site-42",
+        name="pve-01",
+        category=EquipmentCategory.SERVER,
+        assigned_ips=["10.42.10.21"],
+    )
+    site = Site(site_id="site-42", name="Edge 42", equipment=[pve_host, vmware_vm, vmware_server])
+    enriched = collector.enrich_site_with_guests(site)
+    eq_by_id = {eq.equipment_id: eq for eq in enriched.equipment}
+
+    assert eq_by_id["eq-app-vm-110"].hypervisor_id == "vcenter-01"
+    assert eq_by_id["eq-app-vm-110"].power_state == "poweredOn"
+    assert eq_by_id["eq-app-110"].category is EquipmentCategory.SERVER
+    assert eq_by_id["eq-app-110"].hypervisor_id == "vcenter-01"
+    assert eq_by_id["site-42-pve-lxc-110"].hypervisor_id == "eq-pve-01"

@@ -74,6 +74,14 @@ def _clean_optional_str(value: Any) -> Optional[str]:
     return text if text else None
 
 
+def _is_ip_literal(value: str) -> bool:
+    try:
+        ipaddress.ip_address(value.split("/", 1)[0])
+    except ValueError:
+        return False
+    return True
+
+
 def normalize_mac_address(mac: Optional[str]) -> Optional[str]:
     """Normalize a MAC address string (or Proxmox net config string) to lowercase aa:bb:cc:dd:ee:ff."""
     if not isinstance(mac, str):
@@ -93,6 +101,9 @@ def normalize_mac_address(mac: Optional[str]) -> Optional[str]:
             dot_match = _MAC_DOT_RE.search(cleaned)
             if dot_match:
                 cleaned = dot_match.group(0)
+            elif "." in cleaned or _is_ip_literal(cleaned):
+                # Bare-hex fallback must not read IPv4/IPv6 addresses as MACs.
+                return None
 
     hex_only = "".join(ch for ch in cleaned.lower() if ch not in (":", "-", "."))
     if len(hex_only) == 12 and all(c in "0123456789abcdef" for c in hex_only):
@@ -620,31 +631,28 @@ def _parse_published_ports(value: Any) -> list[int]:
         for token in re.split(r"[,;\s]+", value.strip()):
             if not token:
                 continue
-            cleaned = token.split("/", 1)[0].strip()
-            if "->" in cleaned:
-                left = cleaned.split("->", 1)[0]
-                port_part = left.rsplit(":", 1)[-1].strip()
-            elif ":" in cleaned:
-                port_part = cleaned.rsplit(":", 1)[-1].strip()
+            if "->" in token:
+                port_part = token.split("->", 1)[0].rsplit(":", 1)[-1].strip()
+            elif "/" in token:
+                # Docker "80/tcp" without "->" is exposed but not published.
+                continue
             else:
-                port_part = cleaned
+                port_part = token.rsplit(":", 1)[-1].strip()
             if port_part.isdigit():
                 p = int(port_part)
                 if 1 <= p <= 65535:
                     ports.add(p)
         return sorted(ports)
     if isinstance(value, Mapping):
-        pub = value.get("PublicPort") or value.get("public_port") or value.get("host_port") or value.get("HostPort")
-        priv = value.get("PrivatePort") or value.get("private_port") or value.get("port")
-        chosen = pub if pub is not None else priv
-        if chosen is not None:
-            for p in _parse_published_ports(chosen):
-                ports.add(p)
-        else:
-            for k, v in value.items():
-                if isinstance(k, str) and ("/" in k or k.isdigit()):
-                    for p in _parse_published_ports(k):
-                        ports.add(p)
+        # Only host-side bindings count; Docker lists exposed-only ports with just PrivatePort.
+        for pub_key in ("PublicPort", "public_port", "HostPort", "host_port"):
+            if value.get(pub_key) is not None:
+                return _parse_published_ports(value[pub_key])
+        if any(k in value for k in ("PrivatePort", "private_port")):
+            return []
+        # Docker inspect style {"80/tcp": [{"HostIp": "0.0.0.0", "HostPort": "8080"}]} or {"80/tcp": None}
+        for v in value.values():
+            if isinstance(v, (Mapping, list, tuple)):
                 for p in _parse_published_ports(v):
                     ports.add(p)
         return sorted(ports)
@@ -1262,10 +1270,12 @@ def _extract_vmid_hint(text: Optional[str]) -> Optional[int]:
     cleaned = _clean_optional_str(text)
     if not cleaned:
         return None
+    # Only bare digits or explicit Proxmox prefixes count; generic "vm-<n>" names are VMware-style too.
+    # Proxmox VMIDs start at 100, which keeps node names such as "pve-01" from reading as VMIDs.
     if cleaned.isdigit():
         val = int(cleaned)
-        return val if val > 0 else None
-    m = re.search(r"(?:^|[-_:/])(?:qemu|lxc|vm|ct|pve)[-_:/]?(\d{2,7})$", cleaned, re.IGNORECASE)
+        return val if val >= 100 else None
+    m = re.search(r"(?:^|[-_:/])(?:qemu|lxc|ct|pve)[-_:/]?(\d{3,9})$", cleaned, re.IGNORECASE)
     if m:
         return int(m.group(1))
     return None
@@ -1753,6 +1763,21 @@ class ProxmoxContainerCollector(SignalCollector):
                 eval_dt=eval_dt,
             )
 
+        # A generic VM (e.g. VMware) with no match is out of scope for this collector; only
+        # Proxmox-specific evidence lets a reachable snapshot confirm the guest is gone.
+        hypervisor_ref = (equipment.hypervisor_id or "").lower()
+        has_proxmox_evidence = bool(
+            pve_mac_detected
+            or vmid_hint is not None
+            or (
+                hypervisor_ref
+                and (
+                    hypervisor_ref in snapshot.node_ips
+                    or hypervisor_ref in snapshot.node_ips.values()
+                )
+            )
+        )
+
         if has_vm_hint:
             if snapshot.unreachable_hosts or (not snapshot.guests and not snapshot.containers):
                 return ValidationSignal(
@@ -1771,21 +1796,22 @@ class ProxmoxContainerCollector(SignalCollector):
                         "unreachable_hosts": sorted(snapshot.unreachable_hosts),
                     },
                 )
-            return ValidationSignal(
-                signal_type=SignalType.VM_POWER_STATE,
-                status=SignalStatus.INACTIVE,
-                observed_at=eval_dt,
-                age_seconds=0.0,
-                details=(
-                    f"Equipment {equipment.name} ({equipment.equipment_id}) has VM/Proxmox hints, "
-                    "but no matching guest or container was found in snapshot"
-                ),
-                source=self.source,
-                metadata={
-                    "equipment_id": equipment.equipment_id,
-                    "proxmox_mac_detected": pve_mac_detected,
-                },
-            )
+            if has_proxmox_evidence:
+                return ValidationSignal(
+                    signal_type=SignalType.VM_POWER_STATE,
+                    status=SignalStatus.INACTIVE,
+                    observed_at=eval_dt,
+                    age_seconds=0.0,
+                    details=(
+                        f"Equipment {equipment.name} ({equipment.equipment_id}) has Proxmox hints, "
+                        "but no matching guest or container was found in snapshot"
+                    ),
+                    source=self.source,
+                    metadata={
+                        "equipment_id": equipment.equipment_id,
+                        "proxmox_mac_detected": pve_mac_detected,
+                    },
+                )
 
         return ValidationSignal(
             signal_type=SignalType.VM_POWER_STATE,
@@ -1796,7 +1822,7 @@ class ProxmoxContainerCollector(SignalCollector):
             source=self.source,
             metadata={
                 "equipment_id": equipment.equipment_id,
-                "proxmox_mac_detected": False,
+                "proxmox_mac_detected": pve_mac_detected,
             },
         )
 
@@ -1909,10 +1935,23 @@ class ProxmoxContainerCollector(SignalCollector):
                         matched_eq = eq
                         break
 
-            # Match by VMID or name
+            # Match by VMID or name, never taking over a record already hosted by another hypervisor
             if matched_eq is None:
+                guest_host_refs = {
+                    ref.lower()
+                    for ref in (
+                        guest.node,
+                        guest.host_ip,
+                        _resolve_parent_hypervisor_id(
+                            site=cloned_site, host_ip=guest.host_ip, node_name=guest.node
+                        ),
+                    )
+                    if ref
+                }
                 for eq in cloned_site.equipment:
                     if eq.equipment_id in host_equipment_ids:
+                        continue
+                    if eq.hypervisor_id and eq.hypervisor_id.lower() not in guest_host_refs:
                         continue
                     if (
                         _extract_vmid_hint(eq.equipment_id) == guest.vmid
@@ -1982,8 +2021,20 @@ class ProxmoxContainerCollector(SignalCollector):
                         break
 
             if matched_eq is None:
+                container_host_refs = {
+                    ref.lower()
+                    for ref in (
+                        container.host_ip,
+                        _resolve_parent_hypervisor_id(
+                            site=cloned_site, host_ip=container.host_ip, node_name=None
+                        ),
+                    )
+                    if ref
+                }
                 for eq in cloned_site.equipment:
                     if eq.equipment_id in host_equipment_ids:
+                        continue
+                    if eq.hypervisor_id and eq.hypervisor_id.lower() not in container_host_refs:
                         continue
                     if (
                         _names_match(eq.name, container.name)
