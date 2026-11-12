@@ -652,3 +652,138 @@ def test_mapper_and_parser_argument_validation() -> None:
         site, [FdbEntry("sw-01", "1:1", "de:ad:be:00:00:01")]
     )
     assert results[0].port_mode == "uplink"
+
+
+def test_mapper_access_then_trunk_unlinks_equipment_connected_ports() -> None:
+    site = _build_sample_site()
+    mapper = SwitchFdbPortMapper()
+    mapper.map_site_ports(
+        site, [FdbEntry("sw-01", "1:1", "bc:24:11:aa:bb:01", vlan_id="20")]
+    )
+    eq_srv = next(e for e in site.equipment if e.equipment_id == "eq-srv-01")
+    assert "sw-01:1:1" in eq_srv.connected_ports
+
+    results = mapper.map_site_ports(
+        site,
+        [
+            FdbEntry("sw-01", "1:1", "bc:24:11:aa:bb:01", vlan_id="20"),
+            FdbEntry("sw-01", "1:1", "de:ad:be:ef:00:01", vlan_id="20"),
+            FdbEntry("sw-01", "1:1", "de:ad:be:ef:00:02", vlan_id="20"),
+        ],
+    )
+    assert results[0].port_mode == "trunk"
+    assert "sw-01:1:1" not in eq_srv.connected_ports
+    sw = next(d for d in site.devices if d.device_id == "sw-01")
+    p1 = next(p for p in sw.ports if p.name == "1:1")
+    assert p1.connected_device_id is None
+    assert p1.connected_mac is None
+
+    graph = TopologyGraphBuilder().build(site)
+    assert not any(
+        e.relation == "connected_port"
+        and "eq-srv-01" in (e.source_id, e.target_id)
+        and "sw-01:1:1" in (e.source_id, e.target_id)
+        for e in graph.edges
+    )
+
+
+def test_mapper_unroled_ups_stays_access_and_unroled_switch_is_uplink() -> None:
+    site = _build_sample_site()
+    site.devices.append(
+        NetworkDevice(
+            device_id="ups-01",
+            site_id="site-01",
+            hostname="site01-ups-a",
+            management_ip="10.1.10.50",
+        )
+    )
+    site.devices.append(
+        NetworkDevice(
+            device_id="sw-02",
+            site_id="site-01",
+            hostname="site01-sw02",
+            management_ip="10.1.10.4",
+        )
+    )
+    site.ip_addresses.append(
+        IPAddress(ip="10.1.10.50", subnet_id="sub-10", arp_mac="00:c0:b7:11:22:33")
+    )
+    site.ip_addresses.append(
+        IPAddress(ip="10.1.10.4", subnet_id="sub-10", arp_mac="02:00:00:00:00:04")
+    )
+    sw = next(d for d in site.devices if d.device_id == "sw-01")
+    # A UPS previously bound to a port that is now a trunk must be cleared
+    sw.ports[3].connected_device_id = "ups-01"
+
+    mapper = SwitchFdbPortMapper()
+    results = mapper.map_site_ports(
+        site,
+        [
+            FdbEntry("sw-01", "1:1", "00:c0:b7:11:22:33", vlan_id="10"),
+            FdbEntry("sw-01", "1:2", "02:00:00:00:00:04", vlan_id="10"),
+            FdbEntry("sw-01", "1:4", "de:ad:be:ef:00:01", vlan_id="10"),
+            FdbEntry("sw-01", "1:4", "de:ad:be:ef:00:01", vlan_id="20"),
+        ],
+    )
+    by_port = {r.port_name: r for r in results}
+
+    assert by_port["1:1"].port_mode == "access"
+    assert by_port["1:1"].bound_device_id == "ups-01"
+
+    assert by_port["1:2"].port_mode == "uplink"
+    assert by_port["1:2"].bound_device_id == "sw-02"
+
+    assert by_port["1:4"].port_mode == "trunk"
+    p4 = next(p for p in sw.ports if p.name == "1:4")
+    assert p4.connected_device_id is None
+
+
+def test_mapper_voip_pc_with_unknown_hosts_binds_data_vlan_mac() -> None:
+    site = _build_sample_site()
+    results = SwitchFdbPortMapper().classify_site_ports(
+        site,
+        [
+            FdbEntry("sw-01", "1:2", "00:08:5d:aa:bb:cc", vlan_id="30"),
+            FdbEntry("sw-01", "1:2", "de:ad:be:ef:00:01", vlan_id="20"),
+        ],
+        voip_vlan_ids=["30"],
+    )
+    assert results[0].port_mode == "access"
+    assert results[0].bound_mac == "de:ad:be:ef:00:01"
+    assert results[0].bound_device_id is None
+    assert results[0].vlan_ids == ["20", "30"]
+
+
+def test_fdb_table_parser_string_static_flags_and_unrelated_oids() -> None:
+    parser = FdbTableParser()
+    records = parser.parse_qbridge_mib(
+        [
+            {"mac": "bc:24:11:aa:bb:01", "port": "1:1", "is_static": "false"},
+            {"mac": "bc:24:11:aa:bb:02", "port": "1:2", "is_static": "true"},
+        ],
+        device_id="sw-01",
+    )
+    assert [r.is_static for r in records] == [False, True]
+
+    assert (
+        FdbEntry.from_dict(
+            {
+                "device_id": "sw-01",
+                "port_name": "1:1",
+                "mac_address": "bc:24:11:aa:bb:01",
+                "is_static": "false",
+            }
+        ).is_static
+        is False
+    )
+
+    oid_entries = parser.parse_qbridge_mib(
+        {
+            "1.3.6.1.2.1.17.4.3.1.2.0.192.183.17.34.51": 2,
+            # Unrelated enterprise OID with a six-component numeric tail
+            "1.3.6.1.4.1.1916.1.16.4.1.0.192.183.17.34.52": 3,
+        },
+        device_id="sw-01",
+    )
+    assert len(oid_entries) == 1
+    assert oid_entries[0].mac_address == "00:c0:b7:11:22:33"

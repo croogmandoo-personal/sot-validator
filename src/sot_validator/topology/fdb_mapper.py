@@ -26,6 +26,7 @@ from sot_validator.topology.device_types import (
 )
 from sot_validator.topology.identifier import (
     KNOWN_OUI_VENDORS,
+    _TOKEN_SPLIT_PATTERN,
     _extract_oui_prefix,
 )
 
@@ -80,16 +81,11 @@ _QBRIDGE_FDB_OID_PATTERN = re.compile(
 _BRIDGE_FDB_OID_PATTERN = re.compile(
     r"^(?:1\.3\.6\.1\.2\.1\.17\.4\.3\.1\.2|dot1dTpFdbPort)\.(\d+)\.(\d+)\.(\d+)\.(\d+)\.(\d+)\.(\d+)$"
 )
-_GENERIC_TAIL_OID_VLAN_MAC_PATTERN = re.compile(
-    r"\.(\d+)\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$"
-)
-_GENERIC_TAIL_OID_MAC_PATTERN = re.compile(
-    r"\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$"
-)
-_TOKEN_SPLIT_PATTERN = re.compile(r"[^a-z0-9]+")
+_HOSTNAME_TRAILING_DIGITS_PATTERN = re.compile(r"\d+$")
 
 
-def _try_normalize_mac(raw: Any) -> Optional[str]:
+def _parse_mac_token(raw: Any) -> Optional[str]:
+    """Normalize a token only when it is shaped like a full MAC address (CLI-safe)."""
     if not isinstance(raw, str) or not raw.strip():
         return None
     cleaned = raw.strip()
@@ -99,6 +95,18 @@ def _try_normalize_mac(raw: Any) -> Optional[str]:
         return normalize_mac_address(cleaned)
     except ValueError:
         return None
+
+
+def _parse_static_flag(value: Any) -> bool:
+    """Parse FDB static/status values (bool, Q-BRIDGE status int, or string)."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int):
+        # Q-BRIDGE-MIB dot1qTpFdbStatus: 1=other, 2=invalid, 3=learned, 4=self, 5=mgmt
+        return value in (4, 5)
+    if isinstance(value, str):
+        return value.strip().lower() in ("static", "permanent", "mgmt", "4", "5", "true")
+    return False
 
 
 def _normalize_vlan_id(raw: Any) -> Optional[str]:
@@ -146,7 +154,7 @@ def _looks_like_port_name(token: str) -> bool:
     cleaned = token.strip()
     if not cleaned or _is_ignored_port_token(cleaned):
         return False
-    if _try_normalize_mac(cleaned) is not None:
+    if _parse_mac_token(cleaned) is not None:
         return False
     # Common switch port formats: 1:1, 1/1, Gi1/0/1, Port-1/1, eth1, Po1, lag1, etc.
     if re.match(r"^\d+[:/]\d+(?:[:/]\d+)*$", cleaned):
@@ -160,6 +168,34 @@ def _looks_like_port_name(token: str) -> bool:
     ):
         return True
     return False
+
+
+def _site_gateway_ips(site: Site) -> set[str]:
+    gateway_ips: set[str] = set()
+    for v in site.vlans:
+        if v.gateway and v.gateway.strip():
+            gateway_ips.add(v.gateway.strip())
+    for s in site.subnets:
+        if s.gateway and s.gateway.strip():
+            gateway_ips.add(s.gateway.strip())
+    return gateway_ips
+
+
+def _unlink_port_from_equipment(site: Site, dev: NetworkDevice, port: Port) -> None:
+    """Remove references to `port` from every `Equipment.connected_ports` in `site`."""
+    refs = {port.port_id, f"{dev.device_id}:{port.name}", f"{dev.hostname}:{port.name}"}
+    # A bare port name is only cleared when it identifies this port uniquely in the site
+    name_is_unique = not any(
+        p.name == port.name
+        for d in site.devices
+        for p in d.ports
+        if p is not port
+    )
+    if name_is_unique:
+        refs.add(port.name)
+    for eq in site.equipment:
+        if any(ref in refs for ref in eq.connected_ports):
+            eq.connected_ports = [ref for ref in eq.connected_ports if ref not in refs]
 
 
 def _deduplicate_entries(entries: Sequence[FdbEntry]) -> list[FdbEntry]:
@@ -219,7 +255,7 @@ class FdbEntry:
             port_name=data["port_name"],
             mac_address=data["mac_address"],
             vlan_id=data.get("vlan_id"),
-            is_static=bool(data.get("is_static", False)),
+            is_static=_parse_static_flag(data.get("is_static", False)),
         )
 
     def to_json(self, *, indent: Optional[int] = None) -> str:
@@ -333,7 +369,7 @@ class FdbTableParser:
             if len(tokens) < 3:
                 continue
 
-            norm_mac = _try_normalize_mac(tokens[0])
+            norm_mac = _parse_mac_token(tokens[0])
             if norm_mac is None:
                 continue
 
@@ -388,7 +424,7 @@ class FdbTableParser:
             mac_idx: Optional[int] = None
             norm_mac: Optional[str] = None
             for idx, tok in enumerate(tokens):
-                cand = _try_normalize_mac(tok)
+                cand = _parse_mac_token(tok)
                 if cand is not None:
                     mac_idx = idx
                     norm_mac = cand
@@ -457,7 +493,7 @@ class FdbTableParser:
             mac_idx: Optional[int] = None
             norm_mac: Optional[str] = None
             for idx, tok in enumerate(tokens):
-                cand = _try_normalize_mac(tok)
+                cand = _parse_mac_token(tok)
                 if cand is not None:
                     mac_idx = idx
                     norm_mac = cand
@@ -525,7 +561,7 @@ class FdbTableParser:
                 continue
             # Check EXOS pattern first (starts with MAC and has paren VLAN or EXOS port N:M)
             tokens = line.split()
-            if tokens and _try_normalize_mac(tokens[0]) is not None:
+            if tokens and _parse_mac_token(tokens[0]) is not None:
                 if _PAREN_VLAN_PATTERN.search(line) or (
                     len(tokens) >= 4 and ":" in tokens[-1]
                 ):
@@ -654,17 +690,6 @@ class FdbTableParser:
                     m_b = _BRIDGE_FDB_OID_PATTERN.match(oid_str)
                     if m_b:
                         octets = tuple(int(m_b.group(i)) for i in range(1, 7))
-                    else:
-                        m_gq = _GENERIC_TAIL_OID_VLAN_MAC_PATTERN.search(oid_str)
-                        if m_gq:
-                            vlan_id = _normalize_vlan_id(m_gq.group(1))
-                            octets = tuple(int(m_gq.group(i)) for i in range(2, 8))
-                        else:
-                            m_gb = _GENERIC_TAIL_OID_MAC_PATTERN.search(oid_str)
-                            if m_gb:
-                                octets = tuple(
-                                    int(m_gb.group(i)) for i in range(1, 7)
-                                )
 
                 if octets is None or any(o < 0 or o > 255 for o in octets):
                     continue
@@ -680,7 +705,7 @@ class FdbTableParser:
                         or raw_val.get("dot1dTpFdbPort")
                     )
                     status_val = raw_val.get("status", raw_val.get("is_static", False))
-                    is_static = self._is_static_status(status_val)
+                    is_static = _parse_static_flag(status_val)
                     if raw_val.get("vlan_id") is not None:
                         vlan_id = _normalize_vlan_id(raw_val.get("vlan_id"))
                 else:
@@ -751,13 +776,13 @@ class FdbTableParser:
                 vlan_id = _normalize_vlan_id(raw_vlan)
 
                 if "is_static" in item:
-                    is_static = bool(item["is_static"])
+                    is_static = _parse_static_flag(item["is_static"])
                 else:
                     status_val = item.get(
                         "status",
                         item.get("dot1qTpFdbStatus", item.get("dot1dTpFdbStatus")),
                     )
-                    is_static = self._is_static_status(status_val)
+                    is_static = _parse_static_flag(status_val)
 
                 entries.append(
                     FdbEntry(
@@ -772,18 +797,6 @@ class FdbTableParser:
             return _deduplicate_entries(entries)
 
         raise ValueError("Unsupported Q-BRIDGE-MIB input format")
-
-    @staticmethod
-    def _is_static_status(status_val: Any) -> bool:
-        if isinstance(status_val, bool):
-            return status_val
-        if isinstance(status_val, int):
-            # Q-BRIDGE-MIB dot1qTpFdbStatus: 1=other, 2=invalid, 3=learned, 4=self, 5=mgmt
-            return status_val in (4, 5)
-        if isinstance(status_val, str):
-            norm = status_val.strip().lower()
-            return norm in ("static", "permanent", "mgmt", "4", "5", "true")
-        return False
 
 
 class SwitchFdbPortMapper:
@@ -820,7 +833,12 @@ class SwitchFdbPortMapper:
         if role_lower == "switch":
             return "switch"
         hostname_lower = (dev.hostname or "").strip().lower()
-        tokens = {t for t in _TOKEN_SPLIT_PATTERN.split(hostname_lower) if t}
+        # Strip trailing digits so `site01-sw01` yields the `sw` token
+        tokens = {
+            _HOSTNAME_TRAILING_DIGITS_PATTERN.sub("", t)
+            for t in _TOKEN_SPLIT_PATTERN.split(hostname_lower)
+            if t
+        }
         if not role_lower:
             if tokens & _ROUTER_HOSTNAME_TOKENS or any(
                 s in hostname_lower for s in ("router", "gateway", "udm")
@@ -830,8 +848,18 @@ class SwitchFdbPortMapper:
                 s in hostname_lower for s in ("switch", "exos", "voss")
             ):
                 return "switch"
-            return "switch"
+            # Unroled devices without router/switch hints are treated as end-hosts
+            return ""
         return role_lower
+
+    def _infrastructure_device_ids(self, site: Site) -> set[str]:
+        site_gateway_ips = _site_gateway_ips(site)
+        return {
+            d.device_id
+            for d in site.devices
+            if self._classify_network_device_role(d, site_gateway_ips)
+            in ("router", "switch")
+        }
 
     def _build_site_lookup_context(
         self,
@@ -841,6 +869,7 @@ class SwitchFdbPortMapper:
         device_mac_map: Optional[Mapping[str, str]] = None,
     ) -> dict[str, Any]:
         subnet_by_id: dict[str, Subnet] = {s.subnet_id: s for s in site.subnets}
+        # Invalid CIDRs in legacy inventory data are skipped rather than failing the mapping
         parsed_subnets: list[tuple[ipaddress._BaseNetwork, Subnet]] = []
         for s in site.subnets:
             try:
@@ -856,13 +885,7 @@ class SwitchFdbPortMapper:
                 except ValueError:
                     continue
 
-        site_gateway_ips: set[str] = set()
-        for v in site.vlans:
-            if v.gateway and v.gateway.strip():
-                site_gateway_ips.add(v.gateway.strip())
-        for s in site.subnets:
-            if s.gateway and s.gateway.strip():
-                site_gateway_ips.add(s.gateway.strip())
+        site_gateway_ips = _site_gateway_ips(site)
 
         def infer_vlan_for_subnet_id(subnet_id: Optional[str]) -> Optional[str]:
             if not subnet_id:
@@ -938,7 +961,7 @@ class SwitchFdbPortMapper:
                     mac_to_vlan_id[norm_mac] = v_id
 
         for entry in arp_entries:
-            norm_mac = _try_normalize_mac(entry.arp_mac)
+            norm_mac = _parse_mac_token(entry.arp_mac)
             if norm_mac:
                 record_mac_ip(norm_mac, entry.ip, entry.subnet_id)
 
@@ -946,7 +969,7 @@ class SwitchFdbPortMapper:
             raw_mac = ip_rec.arp_mac or (
                 ip_rec.arp_entry.arp_mac if ip_rec.arp_entry is not None else None
             )
-            norm_mac = _try_normalize_mac(raw_mac)
+            norm_mac = _parse_mac_token(raw_mac)
             if norm_mac:
                 record_mac_ip(norm_mac, ip_rec.ip, ip_rec.subnet_id)
                 if ip_rec.assigned_object_id:
@@ -959,8 +982,8 @@ class SwitchFdbPortMapper:
         # Check explicit device_mac_map (supports {device_id: mac} or {mac: device_id})
         if device_mac_map:
             for k, v in device_mac_map.items():
-                norm_k = _try_normalize_mac(k)
-                norm_v = _try_normalize_mac(v)
+                norm_k = _parse_mac_token(k)
+                norm_v = _parse_mac_token(v)
                 if norm_v is not None and k.strip() in dev_by_id:
                     dev_id = k.strip()
                     if dev_id in infra_device_ids:
@@ -991,7 +1014,7 @@ class SwitchFdbPortMapper:
             if dev_role_by_id.get(dev.device_id) == "router":
                 for port in dev.ports:
                     if port.connected_mac and not port.connected_device_id:
-                        norm_p_mac = _try_normalize_mac(port.connected_mac)
+                        norm_p_mac = _parse_mac_token(port.connected_mac)
                         if norm_p_mac:
                             infra_mac_to_device_id[norm_p_mac] = dev.device_id
 
@@ -1219,9 +1242,6 @@ class SwitchFdbPortMapper:
                 continue
 
             # 4. Access port (1 <= mac_count <= max_access_macs)
-            selected_mac: str = unique_macs[0]
-            selected_entity_id: Optional[str] = None
-
             # Prefer MAC matching a known Equipment or non-infra NetworkDevice
             # If voip_vlan_set is provided, also prefer the MAC on the data VLAN over the voice VLAN
             data_mac_candidates = [
@@ -1233,6 +1253,8 @@ class SwitchFdbPortMapper:
                     and set(mac_vlan_map[m]).issubset(voip_vlan_set)
                 )
             ] or unique_macs
+            selected_mac: str = data_mac_candidates[0]
+            selected_entity_id: Optional[str] = None
 
             for m in data_mac_candidates:
                 if m in host_mac_to_entity_id:
@@ -1292,7 +1314,11 @@ class SwitchFdbPortMapper:
         include_empty_ports: bool = False,
         bind_uplink_devices: bool = True,
     ) -> list[PortClassificationResult]:
-        """Classify switch ports and automatically update `Site` switch `Port` and `Equipment` bindings."""
+        """Classify switch ports and automatically update `Site` switch `Port` and `Equipment` bindings.
+
+        Pass `voip_vlan_ids` for VoIP+PC ports whose phone and PC sit on different VLANs;
+        without it those ports are classified as `trunk`.
+        """
         results = self.classify_site_ports(
             site,
             fdb_entries,
@@ -1304,6 +1330,7 @@ class SwitchFdbPortMapper:
 
         dev_by_id: dict[str, NetworkDevice] = {d.device_id: d for d in site.devices}
         eq_by_id: dict[str, Equipment] = {e.equipment_id: e for e in site.equipment}
+        infra_device_ids = self._infrastructure_device_ids(site)
 
         for res in results:
             dev = dev_by_id.get(res.device_id)
@@ -1315,6 +1342,10 @@ class SwitchFdbPortMapper:
                 port = mgr.get_port(res.port_name)
             except KeyError:
                 port = mgr.add_port(res.port_name)
+
+            if res.port_mode != "empty":
+                # Drop stale Equipment links to this port; access bindings re-add below
+                _unlink_port_from_equipment(site, dev, port)
 
             if res.port_mode == "access":
                 port.oper_status = "up"
@@ -1332,15 +1363,21 @@ class SwitchFdbPortMapper:
 
             elif res.port_mode == "trunk":
                 port.oper_status = "up"
-                # Never bind an end-host Equipment record or single MAC to a trunk port
-                if port.connected_device_id in eq_by_id:
+                # Never bind an end-host (Equipment or non-infra device) or single MAC to a trunk port
+                if (
+                    port.connected_device_id
+                    and port.connected_device_id not in infra_device_ids
+                ):
                     port.connected_device_id = None
                 port.connected_mac = None
 
             elif res.port_mode == "uplink":
                 port.oper_status = "up"
-                # Never bind an end-host Equipment record to an uplink port
-                if port.connected_device_id in eq_by_id:
+                # Never bind an end-host (Equipment or non-infra device) to an uplink port
+                if (
+                    port.connected_device_id
+                    and port.connected_device_id not in infra_device_ids
+                ):
                     port.connected_device_id = None
                 if (
                     bind_uplink_devices
