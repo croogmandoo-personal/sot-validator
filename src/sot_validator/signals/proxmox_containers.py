@@ -1399,11 +1399,20 @@ def _collect_host_ips_in_site(site: Site, snapshot: ProxmoxClusterSnapshot) -> s
     return host_ips
 
 
-def _weak_match_allowed(eq: Equipment, parent_refs: set[str]) -> bool:
-    """Name/VMID matches may only enrich an unhosted VM record or one already hosted by this parent."""
+def _weak_match_allowed(
+    eq: Equipment, parent_refs: set[str], *, vmid: Optional[int] = None
+) -> bool:
+    """Return True when an IP, VMID or name match may adopt eq during enrichment.
+
+    Records already hosted by this parent may be adopted. An unhosted record is only adopted when it
+    is a VM whose ID or name carries this guest's Proxmox-format VMID; unhosted VMs are mostly vCenter
+    VMs without a SoT hypervisor_id, and physical records must never be rewritten.
+    """
     if eq.hypervisor_id:
         return eq.hypervisor_id.lower() in parent_refs
-    return eq.category is EquipmentCategory.VM
+    if eq.category is not EquipmentCategory.VM or vmid is None:
+        return False
+    return vmid in (_extract_vmid_hint(eq.equipment_id), _extract_vmid_hint(eq.name))
 
 
 class ProxmoxContainerCollector(SignalCollector):
@@ -1438,6 +1447,12 @@ class ProxmoxContainerCollector(SignalCollector):
         evaluation_time: Optional[datetime | str] = None,
         **kwargs: Any,
     ) -> ValidationSignal:
+        """Evaluate VM_POWER_STATE for a guest, container, Equipment, IPAddress, device or port target.
+
+        Pass ``site`` for Equipment enriched by ``enrich_site_with_guests``: its ``hypervisor_id`` is the
+        host's equipment ID (e.g. ``eq-pve-01``), and without ``site`` it cannot be resolved to a Proxmox
+        host, so name/VMID correlation is skipped (IP and MAC correlation still apply).
+        """
         eval_dt = (
             resolve_evaluation_time(evaluation_time)
             if evaluation_time is not None
@@ -2009,34 +2024,38 @@ class ProxmoxContainerCollector(SignalCollector):
                     if matched_eq is not None:
                         break
 
+            # IP, VMID and name matches only adopt records that _weak_match_allowed permits; a physical
+            # or other-platform record that merely shares an IP or name gets a separate child record.
+            guest_host_refs = {
+                ref.lower()
+                for ref in (
+                    guest.node,
+                    guest.host_ip,
+                    _resolve_parent_hypervisor_id(
+                        site=cloned_site, host_ip=guest.host_ip, node_name=guest.node
+                    ),
+                )
+                if ref
+            }
+
             # Match by guest IP
             if matched_eq is None and guest.ip_addresses:
                 for eq in cloned_site.equipment:
                     if eq.equipment_id in host_equipment_ids:
+                        continue
+                    if not _weak_match_allowed(eq, guest_host_refs, vmid=guest.vmid):
                         continue
                     eq_ips = {normalize_ip_address(ip) for ip in eq.assigned_ips}
                     if any(g_ip in eq_ips for g_ip in guest.ip_addresses):
                         matched_eq = eq
                         break
 
-            # Match by VMID or name only for unhosted VM records or records already hosted by this
-            # guest's node; physical or other-hypervisor records get a separate child record instead.
+            # Match by VMID or name
             if matched_eq is None:
-                guest_host_refs = {
-                    ref.lower()
-                    for ref in (
-                        guest.node,
-                        guest.host_ip,
-                        _resolve_parent_hypervisor_id(
-                            site=cloned_site, host_ip=guest.host_ip, node_name=guest.node
-                        ),
-                    )
-                    if ref
-                }
                 for eq in cloned_site.equipment:
                     if eq.equipment_id in host_equipment_ids:
                         continue
-                    if not _weak_match_allowed(eq, guest_host_refs):
+                    if not _weak_match_allowed(eq, guest_host_refs, vmid=guest.vmid):
                         continue
                     if (
                         _extract_vmid_hint(eq.equipment_id) == guest.vmid
@@ -2098,9 +2117,22 @@ class ProxmoxContainerCollector(SignalCollector):
                 for ip in container.ip_addresses
                 if ip != container.host_ip and ip not in host_ips
             ]
+            # Containers have no VMID, so only records already hosted by this container's host are adopted.
+            container_host_refs = {
+                ref.lower()
+                for ref in (
+                    container.host_ip,
+                    _resolve_parent_hypervisor_id(
+                        site=cloned_site, host_ip=container.host_ip, node_name=None
+                    ),
+                )
+                if ref
+            }
             if non_host_c_ips:
                 for eq in cloned_site.equipment:
-                    if eq.equipment_id in host_equipment_ids:
+                    if eq.equipment_id in host_equipment_ids or eq.equipment_id in guest_linked_ids:
+                        continue
+                    if not _weak_match_allowed(eq, container_host_refs):
                         continue
                     eq_ips = {normalize_ip_address(ip) for ip in eq.assigned_ips}
                     if any(c_ip in eq_ips for c_ip in non_host_c_ips):
@@ -2108,16 +2140,6 @@ class ProxmoxContainerCollector(SignalCollector):
                         break
 
             if matched_eq is None:
-                container_host_refs = {
-                    ref.lower()
-                    for ref in (
-                        container.host_ip,
-                        _resolve_parent_hypervisor_id(
-                            site=cloned_site, host_ip=container.host_ip, node_name=None
-                        ),
-                    )
-                    if ref
-                }
                 for eq in cloned_site.equipment:
                     if eq.equipment_id in host_equipment_ids:
                         continue

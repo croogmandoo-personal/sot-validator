@@ -837,3 +837,97 @@ def test_enrich_keeps_physical_server_with_guest_name_and_separates_containers()
     assert eq_by_id["site-42-pve-lxc-260"].power_state == "running"
     assert eq_by_id["site-42-ct-web01"].power_state == "exited"
     assert eq_by_id["site-42-ct-web01"].hypervisor_id == "eq-pve-01"
+
+
+def test_enrich_keeps_physical_server_sharing_guest_ip_and_unhosted_vm_sharing_name() -> None:
+    snap = ProxmoxClusterSnapshot.from_dict(
+        {
+            "data": [
+                {"type": "node", "node": "pve-01", "ip": "10.42.10.21"},
+                {
+                    "type": "qemu",
+                    "vmid": 250,
+                    "name": "linux250",
+                    "node": "pve-01",
+                    "status": "running",
+                    "ip_addresses": ["10.42.10.200"],
+                },
+                {"type": "lxc", "vmid": 260, "name": "web01", "node": "pve-01", "status": "running"},
+                {"type": "lxc", "vmid": 270, "name": "dns-01", "node": "pve-01", "status": "stopped"},
+            ],
+            "containers": [
+                {
+                    "container_id": "c44444444444",
+                    "name": "metrics",
+                    "image": "prom/prometheus",
+                    "host_ip": "10.42.10.21",
+                    "state": "running",
+                    "ip_addresses": ["10.42.10.201"],
+                }
+            ],
+        }
+    )
+    collector = ProxmoxContainerCollector(snapshot=snap)
+    equipment = [
+        Equipment(
+            equipment_id="eq-pve-01",
+            site_id="site-42",
+            name="pve-01",
+            category=EquipmentCategory.SERVER,
+            assigned_ips=["10.42.10.21"],
+        ),
+        # Physical servers sharing a guest IP and a container IP
+        Equipment(
+            equipment_id="eq-linux-other",
+            site_id="site-42",
+            name="linux-other",
+            category=EquipmentCategory.SERVER,
+            assigned_ips=["10.42.10.200"],
+        ),
+        Equipment(
+            equipment_id="eq-metrics-box",
+            site_id="site-42",
+            name="metrics-box",
+            category=EquipmentCategory.SERVER,
+            assigned_ips=["10.42.10.201"],
+        ),
+        # vCenter-style VM with no hypervisor_id sharing a guest name
+        Equipment(
+            equipment_id="eq-web01",
+            site_id="site-42",
+            name="web01",
+            category=EquipmentCategory.VM,
+            assigned_ips=["10.42.20.5"],
+        ),
+        # Unhosted VM carrying a Proxmox-format VMID is adopted
+        Equipment(
+            equipment_id="eq-lxc-270",
+            site_id="site-42",
+            name="lxc-270",
+            category=EquipmentCategory.VM,
+        ),
+    ]
+    site = Site(site_id="site-42", name="Edge 42", equipment=equipment)
+    enriched = collector.enrich_site_with_guests(site)
+    eq_by_id = {eq.equipment_id: eq for eq in enriched.equipment}
+
+    for eq_id, category in (
+        ("eq-linux-other", EquipmentCategory.SERVER),
+        ("eq-metrics-box", EquipmentCategory.SERVER),
+        ("eq-web01", EquipmentCategory.VM),
+    ):
+        assert eq_by_id[eq_id].category is category
+        assert eq_by_id[eq_id].hypervisor_id is None
+        assert eq_by_id[eq_id].power_state is None
+
+    assert eq_by_id["site-42-pve-qemu-250"].hypervisor_id == "eq-pve-01"
+    assert eq_by_id["site-42-pve-qemu-250"].assigned_ips == ["10.42.10.200"]
+    assert eq_by_id["site-42-pve-lxc-260"].hypervisor_id == "eq-pve-01"
+    assert eq_by_id["site-42-ct-metrics"].hypervisor_id == "eq-pve-01"
+    assert eq_by_id["eq-lxc-270"].hypervisor_id == "eq-pve-01"
+    assert eq_by_id["eq-lxc-270"].power_state == "stopped"
+    assert "site-42-pve-lxc-270" not in eq_by_id
+
+    # Re-running enrichment adopts the records it created instead of duplicating them
+    re_enriched = collector.enrich_site_with_guests(enriched)
+    assert sorted(eq.equipment_id for eq in re_enriched.equipment) == sorted(eq_by_id)
