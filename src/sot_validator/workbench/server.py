@@ -35,6 +35,7 @@ from sot_validator.topology.device_types import (
     DeviceTypeCatalog,
     normalize_mac_address,
 )
+from sot_validator.topology.graph import TopologyGraphBuilder
 from sot_validator.workbench.ui import render_workbench_html
 
 _SLUG_RE = re.compile(r"[^a-z0-9]+")
@@ -953,6 +954,16 @@ class WorkbenchRequestHandler(BaseHTTPRequestHandler):
                 self._send_json(
                     200, self.server.state.get_state_payload(audit_limit=limit)
                 )
+                return
+
+            if route == "/api/topology":
+                with self.server.state._lock:
+                    graph = TopologyGraphBuilder().build(
+                        self.server.state.site, self.server.state.results
+                    )
+                    payload = graph.to_dict()
+                    payload["mermaid"] = graph.to_mermaid()
+                self._send_json(200, payload)
                 return
 
             if route == "/api/audit-log":

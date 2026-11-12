@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 import html
 import json
-from typing import TYPE_CHECKING, Any
+import math
+from typing import TYPE_CHECKING, Any, Optional
 
 from sot_validator.models import EquipmentCategory, ValidationClassification
 from sot_validator.topology.device_types import VALID_DEVICE_ROLES
+from sot_validator.topology.graph import TopologyGraph, TopologyGraphBuilder
 
 if TYPE_CHECKING:
     from sot_validator.workbench.server import WorkbenchState
@@ -43,13 +46,552 @@ def _badge_class(classification: str) -> str:
     return "badge-insufficient"
 
 
+_STALE_CLASSIFICATION = ValidationClassification.STALE_LIKELY_UNUSED.value
+_INACTIVE_POE = frozenset({"", "off", "disabled", "none"})
+_TOPO_COLUMN_ORDER: tuple[str, ...] = (
+    "site",
+    "router",
+    "switch",
+    "vlan",
+    "subnet",
+    "port",
+    "equipment",
+    "ip",
+)
+_TOPO_COL_WIDTH = 180
+_TOPO_ROW_HEIGHT = 56
+_TOPO_PAD_X = 24
+_TOPO_PAD_Y = 36
+# Case-insensitive vendor + model for the three Extreme faceplate templates.
+_FACEPLATE_TEMPLATES: tuple[tuple[str, str, str], ...] = (
+    ("extreme networks", "summit x440-g2-24p", "24"),
+    ("extreme networks", "summit x460-g2-48p", "48"),
+    ("extreme networks", "vsp 7400-48y", "48"),
+)
+
+
+def _template_ports_attr(vendor: Any, model: Any) -> Optional[str]:
+    """Return 24 or 48 when vendor and model match an Extreme faceplate template."""
+    vendor_l = str(vendor or "").strip().lower()
+    model_l = str(model or "").strip().lower()
+    for known_vendor, known_model, ports in _FACEPLATE_TEMPLATES:
+        if vendor_l == known_vendor and model_l == known_model:
+            return ports
+    return None
+
+
+def _faceplate_columns(port_count: int) -> int:
+    if port_count == 24:
+        return 12
+    if port_count == 48:
+        return 24
+    if port_count <= 0:
+        return 0
+    return math.ceil(port_count / 2)
+
+
+def _poe_badge_text(poe_status: Any) -> Optional[str]:
+    if poe_status is None:
+        return None
+    text = str(poe_status).strip()
+    if text.lower() in _INACTIVE_POE:
+        return None
+    return text
+
+
+def _device_node_ids(graph: TopologyGraph, device_id: str) -> set[str]:
+    candidates = {device_id, f"router:{device_id}", f"switch:{device_id}"}
+    found = {
+        node.node_id
+        for node in graph.nodes
+        if node.node_type in ("router", "switch") and node.node_id in candidates
+    }
+    return found or ({device_id} if device_id else set())
+
+
+def _port_is_stale(
+    device: Mapping[str, Any],
+    port: Mapping[str, Any],
+    results: Sequence[Mapping[str, Any]],
+    equipment: Sequence[Mapping[str, Any]],
+) -> bool:
+    hostname = str(device.get("hostname") or "")
+    device_id = str(device.get("device_id") or "")
+    port_id = str(port.get("port_id") or "")
+    port_name = str(port.get("name") or "")
+    connected = str(port.get("connected_device_id") or "")
+    name_key = f"{hostname}:{port_name}"
+    refs = {
+        ref
+        for ref in (
+            port_id,
+            f"{device_id}:{port_name}",
+            f"{hostname}:{port_name}",
+            port_name,
+        )
+        if ref
+    }
+    touching_equipment: set[str] = set()
+    for eq in equipment:
+        connected_ports = eq.get("connected_ports") or []
+        if any(ref in connected_ports for ref in refs):
+            eq_id = eq.get("equipment_id")
+            if eq_id:
+                touching_equipment.add(str(eq_id))
+    for res in results:
+        if res.get("classification") != _STALE_CLASSIFICATION:
+            continue
+        item_id = str(res.get("item_id") or "")
+        if item_id == port_id:
+            return True
+        if res.get("name") == name_key:
+            return True
+        if connected and item_id == connected:
+            return True
+        if item_id in touching_equipment:
+            return True
+    return False
+
+
+def _port_is_uplink(
+    device: Mapping[str, Any],
+    port: Mapping[str, Any],
+    graph: TopologyGraph,
+) -> bool:
+    port_name = str(port.get("name") or "")
+    lowered = port_name.lower()
+    if "trunk" in lowered or "uplink" in lowered:
+        return True
+    node_ids = _device_node_ids(graph, str(device.get("device_id") or ""))
+    for edge in graph.edges:
+        if edge.relation != "uplink_to" or edge.port_name != port_name:
+            continue
+        if edge.source_id in node_ids or edge.target_id in node_ids:
+            return True
+    return False
+
+
+def _faceplate_fill_class(
+    device: Mapping[str, Any],
+    port: Mapping[str, Any],
+    results: Sequence[Mapping[str, Any]],
+    equipment: Sequence[Mapping[str, Any]],
+    graph: TopologyGraph,
+) -> str:
+    if _port_is_stale(device, port, results, equipment):
+        return "faceplate-stale"
+    if _port_is_uplink(device, port, graph):
+        return "faceplate-uplink"
+    if str(port.get("oper_status") or "").strip().lower() == "up":
+        return "faceplate-up"
+    return "faceplate-down"
+
+
+def _render_switch_faceplate(
+    site_dict: Mapping[str, Any],
+    results: Sequence[Mapping[str, Any]],
+    graph: TopologyGraph,
+    device_id: Optional[str] = None,
+) -> str:
+    """Render the two-row switch faceplate for the selected device."""
+    devices = list(site_dict.get("devices") or [])
+    device: Optional[Mapping[str, Any]] = None
+    if device_id:
+        device = next((d for d in devices if d.get("device_id") == device_id), None)
+    if device is None and devices:
+        device = devices[0]
+    if device is None:
+        return (
+            '<div id="switch-faceplate" data-device-id="" data-rows="2" '
+            'data-faceplate-columns="0"><em>No ports provisioned</em></div>'
+        )
+
+    ports = list(device.get("ports") or [])
+    columns = _faceplate_columns(len(ports))
+    template_ports = _template_ports_attr(device.get("vendor"), device.get("model"))
+    template_attr = (
+        f' data-template-ports="{_esc(template_ports)}"' if template_ports else ""
+    )
+    style_attr = ""
+    if columns > 0:
+        style_attr = (
+            f' style="grid-template-columns: repeat({columns}, minmax(0, 1fr));"'
+        )
+    equipment = list(site_dict.get("equipment") or [])
+    if not ports:
+        body = "<em>No ports provisioned</em>"
+    else:
+        cells: list[str] = []
+        for port in ports:
+            fill = _faceplate_fill_class(device, port, results, equipment, graph)
+            poe = _poe_badge_text(port.get("poe_status"))
+            badge = (
+                f'<span class="faceplate-poe-badge">{_esc(poe)}</span>' if poe else ""
+            )
+            cells.append(
+                f'<button type="button" class="faceplate-port {fill}" '
+                f'data-port-id="{_esc(port.get("port_id"))}" '
+                f'data-port-name="{_esc(port.get("name"))}">'
+                f"{_esc(port.get('name'))}{badge}</button>"
+            )
+        body = "".join(cells)
+    return (
+        f'<div id="switch-faceplate" data-device-id="{_esc(device.get("device_id"))}" '
+        f'data-rows="2" data-faceplate-columns="{columns}"{template_attr}{style_attr}>'
+        f"{body}</div>"
+    )
+
+
+def _topology_layout(
+    graph: TopologyGraph,
+) -> tuple[dict[str, tuple[int, int]], int, int]:
+    columns: dict[str, list[str]] = {node_type: [] for node_type in _TOPO_COLUMN_ORDER}
+    for node in graph.nodes:
+        columns.setdefault(node.node_type, []).append(node.node_id)
+    positions: dict[str, tuple[int, int]] = {}
+    max_rows = 1
+    for col_index, node_type in enumerate(_TOPO_COLUMN_ORDER):
+        column_ids = columns.get(node_type, [])
+        max_rows = max(max_rows, len(column_ids))
+        for row_index, node_id in enumerate(column_ids):
+            positions[node_id] = (
+                _TOPO_PAD_X + col_index * _TOPO_COL_WIDTH,
+                _TOPO_PAD_Y + row_index * _TOPO_ROW_HEIGHT,
+            )
+    width = _TOPO_PAD_X * 2 + len(_TOPO_COLUMN_ORDER) * _TOPO_COL_WIDTH
+    height = _TOPO_PAD_Y + max_rows * _TOPO_ROW_HEIGHT + 16
+    return positions, width, height
+
+
+def _render_topology_svg(graph: TopologyGraph) -> str:
+    """Render one inline SVG group per node and one line per edge."""
+    positions, width, height = _topology_layout(graph)
+    lines: list[str] = []
+    for edge in graph.edges:
+        src = positions.get(edge.source_id, (0, 0))
+        dst = positions.get(edge.target_id, (0, 0))
+        lines.append(
+            f'<line class="topo-edge" data-relation="{_esc(edge.relation)}" '
+            f'x1="{src[0]}" y1="{src[1]}" x2="{dst[0]}" y2="{dst[1]}" />'
+        )
+    groups: list[str] = []
+    for node in graph.nodes:
+        x, y = positions.get(node.node_id, (0, 0))
+        groups.append(
+            f'<g class="topo-node" data-node-id="{_esc(node.node_id)}" '
+            f'data-node-type="{_esc(node.node_type)}" '
+            f'transform="translate({x},{y})">'
+            f"<text>{_esc(node.label)}</text></g>"
+        )
+    return (
+        f'<svg id="topology-svg" viewBox="0 0 {width} {height}" '
+        f'width="{width}" height="{height}">'
+        f'{"".join(lines)}{"".join(groups)}</svg>'
+    )
+
+
+_WORKBENCH_V2_SCRIPT = """
+let TOPOLOGY_GRAPH = JSON.parse(document.getElementById('initial-topology').textContent);
+const FACEPLATE_TEMPLATES = __FACEPLATE_TEMPLATES__;
+const TOPO_COLUMN_ORDER = ['site', 'router', 'switch', 'vlan', 'subnet', 'port', 'equipment', 'ip'];
+const TOPO_COL_WIDTH = 180;
+const TOPO_ROW_HEIGHT = 56;
+const TOPO_PAD_X = 24;
+const TOPO_PAD_Y = 36;
+
+function templatePortsAttr(vendor, model) {
+  const v = String(vendor || '').trim().toLowerCase();
+  const m = String(model || '').trim().toLowerCase();
+  for (let i = 0; i < FACEPLATE_TEMPLATES.length; i++) {
+    const row = FACEPLATE_TEMPLATES[i];
+    if (v === row[0] && m === row[1]) return row[2];
+  }
+  return null;
+}
+
+function faceplateColumns(portCount) {
+  if (portCount === 24) return 12;
+  if (portCount === 48) return 24;
+  if (!portCount || portCount < 0) return 0;
+  return Math.ceil(portCount / 2);
+}
+
+function poeBadgeText(poeStatus) {
+  if (poeStatus === null || poeStatus === undefined) return '';
+  const text = String(poeStatus).trim();
+  const lower = text.toLowerCase();
+  if (!text || lower === 'off' || lower === 'disabled' || lower === 'none') return '';
+  return text;
+}
+
+function portIsStale(device, port, results, equipment) {
+  const hostname = device.hostname || '';
+  const deviceId = device.device_id || '';
+  const portId = port.port_id || '';
+  const portName = port.name || '';
+  const connected = port.connected_device_id || '';
+  const nameKey = hostname + ':' + portName;
+  const refs = {};
+  [portId, deviceId + ':' + portName, hostname + ':' + portName, portName].forEach(ref => {
+    if (ref) refs[ref] = true;
+  });
+  const touching = {};
+  (equipment || []).forEach(eq => {
+    const connectedPorts = eq.connected_ports || [];
+    for (let i = 0; i < connectedPorts.length; i++) {
+      if (refs[connectedPorts[i]]) {
+        touching[eq.equipment_id] = true;
+        break;
+      }
+    }
+  });
+  for (let i = 0; i < (results || []).length; i++) {
+    const res = results[i];
+    if (res.classification !== 'Stale / Likely Unused') continue;
+    const itemId = res.item_id || '';
+    if (itemId === portId) return true;
+    if (res.name === nameKey) return true;
+    if (connected && itemId === connected) return true;
+    if (touching[itemId]) return true;
+  }
+  return false;
+}
+
+function portIsUplink(device, port, graph) {
+  const portName = String(port.name || '');
+  const lowered = portName.toLowerCase();
+  if (lowered.indexOf('trunk') !== -1 || lowered.indexOf('uplink') !== -1) return true;
+  const deviceId = device.device_id || '';
+  const ids = {};
+  ids[deviceId] = true;
+  ids['router:' + deviceId] = true;
+  ids['switch:' + deviceId] = true;
+  const edges = (graph && graph.edges) || [];
+  for (let i = 0; i < edges.length; i++) {
+    const edge = edges[i];
+    if (edge.relation !== 'uplink_to' || edge.port_name !== portName) continue;
+    if (ids[edge.source_id] || ids[edge.target_id]) return true;
+  }
+  return false;
+}
+
+function renderSwitchFaceplate() {
+  const site = (WORKBENCH_STATE && WORKBENCH_STATE.site) || {};
+  const devices = site.devices || [];
+  const sel = document.getElementById('pm-device-id');
+  const selectedId = sel ? sel.value : '';
+  const device = devices.find(d => d.device_id === selectedId) || devices[0] || null;
+  const face = document.getElementById('switch-faceplate');
+  if (!face) return;
+  if (!device) {
+    face.setAttribute('data-device-id', '');
+    face.setAttribute('data-rows', '2');
+    face.setAttribute('data-faceplate-columns', '0');
+    face.removeAttribute('data-template-ports');
+    face.innerHTML = '<em>No ports provisioned</em>';
+    return;
+  }
+  const ports = device.ports || [];
+  const columns = faceplateColumns(ports.length);
+  const templatePorts = templatePortsAttr(device.vendor, device.model);
+  face.setAttribute('data-device-id', device.device_id || '');
+  face.setAttribute('data-rows', '2');
+  face.setAttribute('data-faceplate-columns', String(columns));
+  if (templatePorts) face.setAttribute('data-template-ports', templatePorts);
+  else face.removeAttribute('data-template-ports');
+  face.style.gridTemplateColumns = columns
+    ? 'repeat(' + columns + ', minmax(0, 1fr))'
+    : '';
+  if (!ports.length) {
+    face.innerHTML = '<em>No ports provisioned</em>';
+    return;
+  }
+  const results = (WORKBENCH_STATE && WORKBENCH_STATE.results) || [];
+  const equipment = site.equipment || [];
+  face.innerHTML = ports.map(port => {
+    let fill = 'faceplate-down';
+    if (portIsStale(device, port, results, equipment)) fill = 'faceplate-stale';
+    else if (portIsUplink(device, port, TOPOLOGY_GRAPH)) fill = 'faceplate-uplink';
+    else if (String(port.oper_status || '').trim().toLowerCase() === 'up') fill = 'faceplate-up';
+    const poe = poeBadgeText(port.poe_status);
+    const badge = poe
+      ? '<span class="' + 'faceplate-poe-badge' + '">' + escapeHtml(poe) + '</span>'
+      : '';
+    return '<button type="button" class="' + 'faceplate-port' + ' ' + fill
+      + '" data-port-id="' + escapeHtml(port.port_id)
+      + '" data-port-name="' + escapeHtml(port.name) + '">'
+      + escapeHtml(port.name) + badge + '</button>';
+  }).join('');
+}
+
+function drawTopology(graph) {
+  const nodes = (graph && graph.nodes) || [];
+  const edges = (graph && graph.edges) || [];
+  const grouped = {};
+  TOPO_COLUMN_ORDER.forEach(nodeType => { grouped[nodeType] = []; });
+  nodes.forEach(node => {
+    if (!grouped[node.node_type]) grouped[node.node_type] = [];
+    grouped[node.node_type].push(node);
+  });
+  const positions = {};
+  let maxRows = 1;
+  TOPO_COLUMN_ORDER.forEach((nodeType, colIndex) => {
+    const columnNodes = grouped[nodeType] || [];
+    if (columnNodes.length > maxRows) maxRows = columnNodes.length;
+    columnNodes.forEach((node, rowIndex) => {
+      positions[node.node_id] = {
+        x: TOPO_PAD_X + colIndex * TOPO_COL_WIDTH,
+        y: TOPO_PAD_Y + rowIndex * TOPO_ROW_HEIGHT
+      };
+    });
+  });
+  const width = TOPO_PAD_X * 2 + TOPO_COLUMN_ORDER.length * TOPO_COL_WIDTH;
+  const height = TOPO_PAD_Y + maxRows * TOPO_ROW_HEIGHT + 16;
+  const svg = document.getElementById('topology-svg');
+  svg.setAttribute('viewBox', '0 0 ' + width + ' ' + height);
+  svg.setAttribute('width', String(width));
+  svg.setAttribute('height', String(height));
+  const lines = edges.map(edge => {
+    const src = positions[edge.source_id] || {x: 0, y: 0};
+    const dst = positions[edge.target_id] || {x: 0, y: 0};
+    return '<line class="' + 'topo-edge' + '" data-relation="' + escapeHtml(edge.relation)
+      + '" x1="' + src.x + '" y1="' + src.y + '" x2="' + dst.x + '" y2="' + dst.y + '" />';
+  }).join('');
+  const groups = nodes.map(node => {
+    const pos = positions[node.node_id] || {x: 0, y: 0};
+    return '<g class="' + 'topo-node' + '" data-node-id="' + escapeHtml(node.node_id)
+      + '" data-node-type="' + escapeHtml(node.node_type)
+      + '" transform="translate(' + pos.x + ',' + pos.y + ')"><text>'
+      + escapeHtml(node.label) + '</text></g>';
+  }).join('');
+  svg.innerHTML = lines + groups;
+  document.getElementById('topology-mermaid').innerHTML = escapeHtml((graph && graph.mermaid) || '');
+}
+
+async function refreshTopologyMap() {
+  const resp = await fetch('/api/topology');
+  if (!resp.ok) return;
+  const data = await resp.json();
+  TOPOLOGY_GRAPH = data;
+  drawTopology(data);
+  renderSwitchFaceplate();
+}
+
+function fillPortManagerForm(deviceId, fields) {
+  switchTab('tab-devices-ports');
+  const devSel = document.getElementById('pm-device-id');
+  if (deviceId) devSel.value = deviceId;
+  document.getElementById('pm-port-name').value = fields.name || '';
+  document.getElementById('pm-range-spec').value = '';
+  document.getElementById('pm-admin-status').value = fields.admin_status || '';
+  document.getElementById('pm-oper-status').value = fields.oper_status || '';
+  document.getElementById('pm-poe-status').value = fields.poe_status || '';
+  document.getElementById('pm-vlan-id').value = fields.vlan_id || '';
+  document.getElementById('pm-connected-mac').value = fields.connected_mac || '';
+  document.getElementById('pm-connected-device').value = fields.connected_device_id || '';
+  renderSwitchFaceplate();
+}
+
+function onTopologyNodeClick(el) {
+  document.querySelectorAll('.topo-node').forEach(nodeEl => {
+    nodeEl.classList.remove('topo-selected');
+  });
+  el.classList.add('topo-selected');
+  const nodeId = el.getAttribute('data-node-id');
+  const nodeType = el.getAttribute('data-node-type');
+  const nodes = (TOPOLOGY_GRAPH && TOPOLOGY_GRAPH.nodes) || [];
+  let node = null;
+  for (let i = 0; i < nodes.length; i++) {
+    if (nodes[i].node_id === nodeId) {
+      node = nodes[i];
+      break;
+    }
+  }
+  if (nodeType === 'site' || nodeType === 'subnet') {
+    return;
+  }
+  if (!node) return;
+  if (nodeType === 'router' || nodeType === 'switch') {
+    openEditModal('NetworkDevice', node.node_id);
+    return;
+  }
+  if (nodeType === 'equipment') {
+    openEditModal('Equipment', node.node_id);
+    return;
+  }
+  if (nodeType === 'ip') {
+    openEditModal('IPAddress', node.node_id);
+    return;
+  }
+  if (nodeType === 'port') {
+    const meta = node.metadata || {};
+    fillPortManagerForm(meta.device_id, {
+      name: meta.name,
+      admin_status: meta.admin_status,
+      oper_status: meta.oper_status,
+      poe_status: meta.poe_status,
+      vlan_id: node.vlan_id || meta.vlan_id,
+      connected_mac: node.mac || meta.connected_mac,
+      connected_device_id: meta.connected_device_id
+    });
+    return;
+  }
+  if (nodeType === 'vlan') {
+    switchTab('tab-vlans');
+    const meta = node.metadata || {};
+    document.getElementById('vlan-id-input').value = node.vlan_id || '';
+    document.getElementById('vlan-name-input').value = node.label || '';
+    document.getElementById('vlan-subnet-id-input').value = meta.subnet_id || '';
+    document.getElementById('vlan-cidr-input').value = meta.cidr || '';
+    document.getElementById('vlan-gateway-input').value = meta.gateway || '';
+  }
+}
+
+function onFaceplatePortClick(btn) {
+  const portId = btn.getAttribute('data-port-id');
+  const face = btn.closest('#switch-faceplate');
+  const site = (WORKBENCH_STATE && WORKBENCH_STATE.site) || {};
+  const sel = document.getElementById('pm-device-id');
+  const deviceId = (sel && sel.value) || (face ? face.getAttribute('data-device-id') : '');
+  const device = (site.devices || []).find(d => d.device_id === deviceId);
+  if (!device) return;
+  const port = (device.ports || []).find(p => p.port_id === portId);
+  if (!port) return;
+  fillPortManagerForm(device.device_id, {
+    name: port.name,
+    admin_status: port.admin_status,
+    oper_status: port.oper_status,
+    poe_status: port.poe_status,
+    vlan_id: port.vlan_id,
+    connected_mac: port.connected_mac,
+    connected_device_id: port.connected_device_id
+  });
+}
+
+document.getElementById('pm-device-id').addEventListener('change', renderSwitchFaceplate);
+document.getElementById('topology-svg').addEventListener('click', ev => {
+  const el = ev.target.closest ? ev.target.closest('.topo-node') : null;
+  if (el) onTopologyNodeClick(el);
+});
+document.getElementById('switch-faceplate').addEventListener('click', ev => {
+  const btn = ev.target.closest ? ev.target.closest('.faceplate-port') : null;
+  if (btn) onFaceplatePortClick(btn);
+});
+""".replace(
+    "__FACEPLATE_TEMPLATES__",
+    json.dumps([list(row) for row in _FACEPLATE_TEMPLATES]),
+)
+
+
 def render_workbench_html(
     state: WorkbenchState,
     *,
     title: str = DEFAULT_WORKBENCH_TITLE,
 ) -> str:
     """Render a complete, self-contained HTML5 Workbench UI pre-seeded with `state`."""
-    payload = state.get_state_payload(audit_limit=100)
+    with state._lock:
+        payload = state.get_state_payload(audit_limit=100)
+        graph = TopologyGraphBuilder().build(state.site, state.results)
     site_dict = payload["site"]
     results_list = payload["results"]
     templates_list = payload["templates"]
@@ -282,6 +824,13 @@ def render_workbench_html(
     ]
 
     embedded_state_json = _safe_json_for_script(payload)
+    topology_payload = graph.to_dict()
+    topology_payload["mermaid"] = graph.to_mermaid()
+    embedded_topology_json = _safe_json_for_script(topology_payload)
+    faceplate_html = _render_switch_faceplate(site_dict, results_list, graph)
+    topology_svg = _render_topology_svg(graph)
+    mermaid_html = _esc(topology_payload["mermaid"])
+    v2_script = _WORKBENCH_V2_SCRIPT
 
     return f"""<!DOCTYPE html>
 <html lang="en">
@@ -487,6 +1036,57 @@ th {{ background: var(--panel-alt); font-weight: 600; }}
   margin-bottom: 1rem;
   font-weight: 600;
 }}
+#topology-svg {{
+  width: 100%;
+  height: auto;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}}
+.topo-node {{ cursor: pointer; }}
+.topo-node text {{ fill: var(--text); font-size: 12px; }}
+.topo-edge {{ stroke: #64748b; stroke-width: 1.5; }}
+.topo-node.topo-selected {{ outline: 2px solid #38bdf8; }}
+#topology-mermaid {{
+  margin-top: 0.75rem;
+  background: var(--panel);
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.75rem;
+  overflow: auto;
+  white-space: pre-wrap;
+}}
+#switch-faceplate {{
+  display: grid;
+  grid-auto-flow: row;
+  grid-template-rows: repeat(2, auto);
+  gap: 0.35rem;
+  margin-bottom: 1rem;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.75rem;
+}}
+.faceplate-port {{
+  color: #fff;
+  border: 1px solid rgba(15, 23, 42, 0.35);
+  border-radius: 4px;
+  min-height: 2rem;
+  font-size: 0.75rem;
+  font-weight: 700;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.25rem;
+  padding: 0.2rem 0.4rem;
+}}
+.faceplate-up {{ background: #10b981; }}
+.faceplate-down {{ background: #64748b; }}
+.faceplate-uplink {{ background: #4f46e5; }}
+.faceplate-stale {{ background: #e11d48; }}
+.faceplate-poe-badge {{ background: #f59e0b; color: #0f172a; border-radius: 999px; padding: 0 0.35rem; font-size: 0.68rem; }}
 </style>
 </head>
 <body>
@@ -553,6 +1153,7 @@ th {{ background: var(--panel-alt); font-weight: 600; }}
   <nav class="tabs">
     <button type="button" class="tab-btn active" data-tab="tab-inventory" onclick="switchTab('tab-inventory')">Modifiable Inventory</button>
     <button type="button" class="tab-btn" data-tab="tab-devices-ports" onclick="switchTab('tab-devices-ports')">Routers, Switches &amp; Port Manager</button>
+    <button type="button" class="tab-btn" data-tab="tab-topology" onclick="switchTab('tab-topology')">Topology Map</button>
     <button type="button" class="tab-btn" data-tab="tab-vlans" onclick="switchTab('tab-vlans')">VLAN &amp; Subnet Manager</button>
     <button type="button" class="tab-btn" data-tab="tab-audit-log" onclick="switchTab('tab-audit-log')">Audit Log</button>
   </nav>
@@ -632,7 +1233,7 @@ th {{ background: var(--panel-alt); font-weight: 600; }}
         <form id="port-manager-form" onsubmit="submitPortManager(event)">
           <div class="form-row">
             <label for="pm-device-id">Target Network Device *</label>
-            <select id="pm-device-id" name="device_id" required>
+            <select id="pm-device-id" name="device_id" required onchange="renderSwitchFaceplate()">
               {"".join(device_options_html)}
             </select>
           </div>
@@ -683,9 +1284,16 @@ th {{ background: var(--panel-alt); font-weight: 600; }}
       </div>
     </div>
 
+    {faceplate_html}
+
     <div id="device-port-grids">
       {"".join(device_cards_html)}
     </div>
+  </section>
+
+  <section id="tab-topology" class="tab-panel">
+    {topology_svg}
+    <pre id="topology-mermaid">{mermaid_html}</pre>
   </section>
 
   <!-- 4. VLAN & Subnet Manager Tab -->
@@ -818,6 +1426,7 @@ th {{ background: var(--panel-alt); font-weight: 600; }}
 </div>
 
 <script id="initial-workbench-state" type="application/json">{embedded_state_json}</script>
+<script id="initial-topology" type="application/json">{embedded_topology_json}</script>
 <script>
 let WORKBENCH_STATE = JSON.parse(document.getElementById('initial-workbench-state').textContent);
 
@@ -1004,6 +1613,8 @@ function renderState(state) {{
   document.getElementById('audit-log-tbody').innerHTML = auditRows;
 
   applyInventoryFilters();
+  renderSwitchFaceplate();
+  refreshTopologyMap();
 }}
 
 function applyInventoryFilters() {{
@@ -1215,6 +1826,7 @@ async function submitVlanForm(ev) {{
     showBanner(data.error || 'Failed to save VLAN', true);
   }}
 }}
+{v2_script}
 </script>
 </body>
 </html>
