@@ -8,13 +8,13 @@ import re
 from typing import Callable, Optional
 from urllib.error import HTTPError
 from urllib.parse import urljoin
-from urllib.request import Request, urlopen
 
 from sot_validator.extraction.client import (
     ReadOnlyViolationError,
     SoTClient,
     validate_read_only_request,
 )
+from sot_validator.extraction.guard import ReadOnlyHttpGuard
 from sot_validator.extraction.sql_export import (
     _clean_optional_str,
     _normalize_category,
@@ -237,10 +237,10 @@ def _extract_table_rows(table: Optional[_HtmlNode]) -> list[dict[str, Optional[s
 
 def _default_urllib_transport(method: str, url: str) -> str:
     validate_read_only_request(method, url)
-    req = Request(url, method=method.upper(), headers={"User-Agent": "sot-validator/0.1 (read-only)"})
-    with urlopen(req, timeout=15) as resp:
-        raw_bytes: bytes = resp.read()
-        return raw_bytes.decode("utf-8", errors="replace")
+    raw_bytes = ReadOnlyHttpGuard().request(
+        method, url, headers={"User-Agent": "sot-validator/0.1 (read-only)"}, timeout=15
+    )
+    return raw_bytes.decode("utf-8", errors="replace")
 
 
 class HtmlScraperSoTClient(SoTClient):

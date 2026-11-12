@@ -9,12 +9,12 @@ import json
 import time
 from typing import Any, Optional
 from urllib.parse import urljoin, urlsplit
-from urllib.request import Request, urlopen
 
 from sot_validator.extraction.client import (
     ReadOnlyViolationError as ExtractionReadOnlyViolationError,
     validate_read_only_request,
 )
+from sot_validator.extraction.guard import ReadOnlyHttpGuard
 from sot_validator.signals.hypervisor import (
     HypervisorVmRecord,
     MultiVCenterInventoryProvider,
@@ -269,10 +269,10 @@ class AuthenticatedScraperSession:
         headers: Mapping[str, str],
         timeout: float,
     ) -> str:
-        req = Request(full_url, method=method, headers=dict(headers))
-        with urlopen(req, timeout=timeout) as resp:
-            raw_bytes: bytes = resp.read()
-            return raw_bytes.decode("utf-8", errors="replace")
+        raw_bytes = ReadOnlyHttpGuard().request(
+            method, full_url, headers=headers, timeout=timeout
+        )
+        return raw_bytes.decode("utf-8", errors="replace")
 
     def _invoke_transport(
         self,
@@ -602,11 +602,11 @@ class VSphereRestConnector:
         headers: Mapping[str, str],
         timeout: float,
     ) -> Any:
-        req = Request(full_url, method=method, headers=dict(headers))
-        with urlopen(req, timeout=timeout) as resp:
-            raw_bytes: bytes = resp.read()
-            text = raw_bytes.decode("utf-8", errors="replace").strip()
-            return json.loads(text) if text else []
+        raw_bytes = ReadOnlyHttpGuard().request(
+            method, full_url, headers=headers, timeout=timeout
+        )
+        text = raw_bytes.decode("utf-8", errors="replace").strip()
+        return json.loads(text) if text else []
 
     def _invoke_transport(
         self,
