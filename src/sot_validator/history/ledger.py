@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
@@ -532,6 +532,73 @@ def _try_parse_slash24_ipv4(
     return None
 
 
+class HistorySchemaVersionError(RuntimeError):
+    """Raised when a history database has a newer schema than this code supports."""
+
+
+def _migration_1_create_base_tables(conn: sqlite3.Connection) -> None:
+    """Create the v1 ledger tables; also stamps pre-versioning databases unchanged."""
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS validation_runs (
+            run_seq INTEGER PRIMARY KEY AUTOINCREMENT,
+            run_id TEXT NOT NULL UNIQUE,
+            recorded_at TEXT NOT NULL,
+            site_ids_json TEXT NOT NULL,
+            total_items INTEGER NOT NULL,
+            classification_counts_json TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS item_streaks (
+            item_type TEXT NOT NULL,
+            item_id TEXT NOT NULL,
+            site_id TEXT NOT NULL,
+            name TEXT NOT NULL,
+            current_classification TEXT NOT NULL,
+            current_confidence REAL NOT NULL,
+            consecutive_stale_runs INTEGER NOT NULL,
+            total_runs_seen INTEGER NOT NULL,
+            first_seen_at TEXT NOT NULL,
+            first_stale_at TEXT,
+            last_confirmed_active_at TEXT,
+            stale_duration_days REAL NOT NULL,
+            previous_classification TEXT,
+            transition_type TEXT,
+            PRIMARY KEY (item_type, item_id)
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS drift_events (
+            event_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            run_id TEXT NOT NULL,
+            recorded_at TEXT NOT NULL,
+            site_id TEXT NOT NULL,
+            item_type TEXT NOT NULL,
+            item_id TEXT NOT NULL,
+            name TEXT NOT NULL,
+            previous_classification TEXT NOT NULL,
+            new_classification TEXT NOT NULL,
+            transition_type TEXT NOT NULL,
+            confidence REAL NOT NULL
+        )
+        """
+    )
+
+
+# Ordered schema migrations: entry ``i`` upgrades ``user_version`` ``i`` to ``i + 1``.
+# Add schema changes as new entries; never edit an existing migration.
+_MIGRATIONS: list[Callable[[sqlite3.Connection], None]] = [
+    _migration_1_create_base_tables,
+]
+
+HISTORY_SCHEMA_VERSION: int = len(_MIGRATIONS)
+
+
 class HistoryStore:
     """SQLite-backed multi-run validation history ledger, streak tracker, and drift analyzer."""
 
@@ -557,54 +624,31 @@ class HistoryStore:
 
         self._conn = sqlite3.connect(conn_target)
         self._conn.row_factory = sqlite3.Row
-        self._init_schema()
+        try:
+            self._init_schema()
+        except BaseException:
+            self._conn.close()
+            raise
 
     def _init_schema(self) -> None:
-        with self._conn:
-            self._conn.executescript(
-                """
-                CREATE TABLE IF NOT EXISTS validation_runs (
-                    run_seq INTEGER PRIMARY KEY AUTOINCREMENT,
-                    run_id TEXT NOT NULL UNIQUE,
-                    recorded_at TEXT NOT NULL,
-                    site_ids_json TEXT NOT NULL,
-                    total_items INTEGER NOT NULL,
-                    classification_counts_json TEXT NOT NULL
-                );
-
-                CREATE TABLE IF NOT EXISTS item_streaks (
-                    item_type TEXT NOT NULL,
-                    item_id TEXT NOT NULL,
-                    site_id TEXT NOT NULL,
-                    name TEXT NOT NULL,
-                    current_classification TEXT NOT NULL,
-                    current_confidence REAL NOT NULL,
-                    consecutive_stale_runs INTEGER NOT NULL,
-                    total_runs_seen INTEGER NOT NULL,
-                    first_seen_at TEXT NOT NULL,
-                    first_stale_at TEXT,
-                    last_confirmed_active_at TEXT,
-                    stale_duration_days REAL NOT NULL,
-                    previous_classification TEXT,
-                    transition_type TEXT,
-                    PRIMARY KEY (item_type, item_id)
-                );
-
-                CREATE TABLE IF NOT EXISTS drift_events (
-                    event_id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    run_id TEXT NOT NULL,
-                    recorded_at TEXT NOT NULL,
-                    site_id TEXT NOT NULL,
-                    item_type TEXT NOT NULL,
-                    item_id TEXT NOT NULL,
-                    name TEXT NOT NULL,
-                    previous_classification TEXT NOT NULL,
-                    new_classification TEXT NOT NULL,
-                    transition_type TEXT NOT NULL,
-                    confidence REAL NOT NULL
-                );
-                """
+        migrations = list(_MIGRATIONS)
+        supported = len(migrations)
+        current = int(self._conn.execute("PRAGMA user_version").fetchone()[0])
+        if current > supported:
+            raise HistorySchemaVersionError(
+                f"history database schema version {current} is newer than the "
+                f"highest version this code supports ({supported})"
             )
+        for version in range(current + 1, supported + 1):
+            self._conn.execute("BEGIN")
+            try:
+                migrations[version - 1](self._conn)
+                self._conn.execute(f"PRAGMA user_version = {version}")
+                self._conn.execute("COMMIT")
+            except BaseException:
+                if self._conn.in_transaction:
+                    self._conn.execute("ROLLBACK")
+                raise
 
     def close(self) -> None:
         """Close the underlying SQLite connection."""
@@ -1380,8 +1424,10 @@ class HistoryStore:
 
 
 __all__ = [
+    "HISTORY_SCHEMA_VERSION",
     "DriftEvent",
     "DriftTransitionType",
+    "HistorySchemaVersionError",
     "HistoryStore",
     "ItemStreakSummary",
     "SubnetUtilizationSummary",
