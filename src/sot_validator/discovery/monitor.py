@@ -844,6 +844,11 @@ HOME_ASSISTANT_EVENT_TYPE = "sot_validator_drift"
 DriftSender = Callable[[str, str, Mapping[str, str], bytes, float], int]
 
 
+def _has_unsafe_chars(value: str) -> bool:
+    """True when the value holds whitespace or control characters (invalid in headers/URLs)."""
+    return any(ch.isspace() or not ch.isprintable() for ch in value)
+
+
 @dataclass
 class DriftAlertTarget:
     """Destination for a drift report: JSON file, generic webhook, or Home Assistant."""
@@ -866,6 +871,10 @@ class DriftAlertTarget:
         else:
             if not isinstance(self.destination, str) or not self.destination.strip():
                 raise ValueError(f"{self.kind} destination must be a non-empty URL")
+            if _has_unsafe_chars(self.destination):
+                raise ValueError(
+                    f"{self.kind} destination must not contain whitespace or control characters"
+                )
             parts = urllib.parse.urlsplit(self.destination.strip())
             if parts.scheme.lower() not in ("http", "https") or not parts.hostname:
                 raise ValueError(
@@ -876,6 +885,10 @@ class DriftAlertTarget:
         if self.kind == "home_assistant_event":
             if not self.token or not self.token.strip():
                 raise ValueError("home_assistant_event targets require a non-empty token")
+            if _has_unsafe_chars(self.token):
+                raise ValueError(
+                    "home_assistant_event token must not contain whitespace or control characters"
+                )
         elif self.token is not None:
             raise ValueError(f"{self.kind} targets do not accept a token")
         if self.name is None:
@@ -918,6 +931,11 @@ def _default_sender(
     body: bytes,
     timeout: float,
 ) -> int:
+    """POST via urllib without following redirects; returns the HTTP status code.
+
+    Standard ``http_proxy``/``https_proxy`` settings apply, so prefer ``https``
+    destinations when a bearer token is sent.
+    """
     request = urllib.request.Request(url, data=body, headers=dict(headers), method=method)
     opener = urllib.request.build_opener(_RefuseRedirectHandler())
     try:
@@ -938,8 +956,19 @@ def _redacted_destination(target: DriftAlertTarget) -> str:
 
 
 def _redact(text: str, secrets: Iterable[Optional[str]]) -> str:
-    for secret in sorted((s for s in secrets if s), key=len, reverse=True):
-        text = text.replace(secret, "***")
+    # Also cover the escaped forms that str/bytes reprs put into exception messages.
+    forms: set[str] = set()
+    for secret in secrets:
+        if secret:
+            forms.update(
+                (
+                    secret,
+                    repr(secret)[1:-1],
+                    repr(secret.encode("utf-8", "backslashreplace"))[2:-1],
+                )
+            )
+    for form in sorted(forms, key=len, reverse=True):
+        text = text.replace(form, "***")
     return text
 
 

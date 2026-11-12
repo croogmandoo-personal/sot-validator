@@ -838,3 +838,40 @@ def test_default_sender_returns_http_error_code(monkeypatch) -> None:
 
     monkeypatch.setattr(monitor.urllib.request, "build_opener", lambda *handlers: ErrorOpener())
     assert monitor._default_sender("POST", "http://hook.local/x", {}, b"{}", 1.0) == 302
+
+
+def test_token_and_url_with_control_characters_are_rejected() -> None:
+    for bad_token in (f"{TOKEN}\n", f"{TOKEN}\r\nX-Evil: 1", f"s3cr3t token", f"{TOKEN}\x00"):
+        with pytest.raises(ValueError) as excinfo:
+            DriftAlertTarget(kind="home_assistant_event", destination="http://ha.local:8123", token=bad_token)
+        assert TOKEN not in str(excinfo.value)
+        assert "s3cr3t" not in str(excinfo.value)
+    for bad_url in ("http://ha.local:8123/api/webhook/id\n", "http://ha.local/a b", "http://ha.local/\x07"):
+        with pytest.raises(ValueError) as excinfo:
+            DriftAlertTarget(kind="home_assistant_webhook", destination=bad_url)
+        assert "api/webhook/id" not in str(excinfo.value)
+
+
+def test_redaction_covers_escaped_secret_forms(caplog) -> None:
+    token = "s3cr3t\\tok\u00e9n"
+    hook_url = "https://hooks.example.com/hook/very-secret-hook-id"
+    sender = RecordingSender(
+        [
+            ValueError(f"Invalid header value {('Bearer ' + token).encode('utf-8', 'backslashreplace')!r}"),
+            ValueError(f"Invalid header {token!r}"),
+            ValueError(f"Invalid URL {hook_url!r}"),
+        ]
+    )
+    targets = [
+        DriftAlertTarget(kind="home_assistant_event", destination="http://ha.local:8123", token=token),
+        DriftAlertTarget(kind="home_assistant_event", destination="http://ha.local:8123", token=token),
+        DriftAlertTarget(kind="webhook", destination=hook_url),
+    ]
+    with caplog.at_level(logging.DEBUG):
+        results = DriftAlertDispatcher(targets, sender=sender).dispatch(_report())
+    assert [r.status for r in results] == ["failed", "failed", "failed"]
+    texts = [r.detail or "" for r in results] + [repr(r) for r in results] + [caplog.text]
+    for text in texts:
+        assert "s3cr3t" not in text
+        assert hook_url not in text
+    assert results[0].detail == "ValueError: Invalid header value b'Bearer ***'"
