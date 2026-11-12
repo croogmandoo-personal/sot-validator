@@ -1,4 +1,9 @@
-"""Phase 2 approval-gated SoT remediation executor, reversible SQL generator, and rollback journal."""
+"""Phase 2 approval-gated SoT remediation executor, reversible SQL generator, and rollback journal.
+
+Remediation write paths are deliberately outside ``ReadOnlyHttpGuard`` and the read-only
+extraction rules; they stay gated by SHA-256 manifest verification, ``confirm_write`` and
+the append-only rollback journal instead.
+"""
 
 from __future__ import annotations
 
