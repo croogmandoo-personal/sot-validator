@@ -58,10 +58,33 @@ _TOPO_COLUMN_ORDER: tuple[str, ...] = (
     "equipment",
     "ip",
 )
-_TOPO_COL_WIDTH = 180
+_TOPO_NODE_W = 200
+_TOPO_NODE_H = 56
+_TOPO_COL_WIDTH = 224
 _TOPO_ROW_HEIGHT = 56
 _TOPO_PAD_X = 24
 _TOPO_PAD_Y = 36
+_FACEPLATE_COL_MIN = "5rem"
+_FACEPLATE_STATE_LABEL = {
+    "faceplate-stale": "Stale",
+    "faceplate-uplink": "Uplink",
+    "faceplate-up": "Up",
+    "faceplate-down": "Down",
+}
+_FACEPLATE_LEGEND = (
+    '<p class="faceplate-legend">'
+    '<span class="legend-item"><span class="legend-swatch faceplate-up" '
+    'aria-hidden="true"></span> Up</span>'
+    '<span class="legend-item"><span class="legend-swatch faceplate-down" '
+    'aria-hidden="true"></span> Down</span>'
+    '<span class="legend-item"><span class="legend-swatch faceplate-uplink" '
+    'aria-hidden="true"></span> Uplink</span>'
+    '<span class="legend-item"><span class="legend-swatch faceplate-stale" '
+    'aria-hidden="true"></span> Stale</span>'
+    '<span class="legend-item"><span class="legend-swatch faceplate-poe-badge" '
+    'aria-hidden="true"></span> PoE</span>'
+    "</p>"
+)
 # Case-insensitive vendor + model for the three Extreme faceplate templates.
 _FACEPLATE_TEMPLATES: tuple[tuple[str, str, str], ...] = (
     ("extreme networks", "summit x440-g2-24p", "24"),
@@ -187,6 +210,25 @@ def _faceplate_fill_class(
     return "faceplate-down"
 
 
+def _faceplate_access_name(port_name: Any, fill: str, poe: str) -> str:
+    """Accessible name: port, link state, and PoE text when a badge is shown."""
+    state = _FACEPLATE_STATE_LABEL.get(fill, "Down")
+    name = f"{port_name}, {state}"
+    if poe:
+        name = f"{name}, PoE {poe}"
+    return name
+
+
+def _faceplate_chrome(hostname: str, faceplate: str) -> str:
+    """Panel heading and legend sit outside the scrolling port grid."""
+    return (
+        '<div class="faceplate-panel">'
+        '<p class="faceplate-heading">Front panel '
+        f'<strong id="faceplate-hostname">{_esc(hostname)}</strong></p>'
+        f"{_FACEPLATE_LEGEND}{faceplate}</div>"
+    )
+
+
 def _render_switch_faceplate(
     site_dict: Mapping[str, Any],
     results: Sequence[Mapping[str, Any]],
@@ -201,9 +243,10 @@ def _render_switch_faceplate(
     if device is None and devices:
         device = devices[0]
     if device is None:
-        return (
+        return _faceplate_chrome(
+            "",
             '<div id="switch-faceplate" data-device-id="" data-rows="2" '
-            'data-faceplate-columns="0"><em>No ports provisioned</em></div>'
+            'data-faceplate-columns="0"><em>No ports provisioned</em></div>',
         )
 
     ports = list(device.get("ports") or [])
@@ -215,7 +258,8 @@ def _render_switch_faceplate(
     style_attr = ""
     if columns > 0:
         style_attr = (
-            f' style="grid-template-columns: repeat({columns}, minmax(0, 1fr));"'
+            " style=\"grid-template-columns: repeat("
+            f"{columns}, minmax({_FACEPLATE_COL_MIN}, max-content));\""
         )
     equipment = list(site_dict.get("equipment") or [])
     if not ports:
@@ -228,18 +272,21 @@ def _render_switch_faceplate(
             badge = (
                 f'<span class="faceplate-poe-badge">{_esc(poe)}</span>' if poe else ""
             )
+            access = _esc(_faceplate_access_name(port.get("name"), fill, poe))
             cells.append(
                 f'<button type="button" class="faceplate-port {fill}" '
                 f'data-port-id="{_esc(port.get("port_id"))}" '
-                f'data-port-name="{_esc(port.get("name"))}">'
+                f'data-port-name="{_esc(port.get("name"))}" '
+                f'title="{access}" aria-label="{access}">'
                 f"{_esc(port.get('name'))}{badge}</button>"
             )
         body = "".join(cells)
-    return (
+    faceplate = (
         f'<div id="switch-faceplate" data-device-id="{_esc(device.get("device_id"))}" '
         f'data-rows="2" data-faceplate-columns="{columns}"{template_attr}{style_attr}>'
         f"{body}</div>"
     )
+    return _faceplate_chrome(str(device.get("hostname") or ""), faceplate)
 
 
 def _topology_layout(
@@ -263,6 +310,27 @@ def _topology_layout(
     return positions, width, height
 
 
+def _edge_endpoints(
+    src: tuple[int, int], dst: tuple[int, int]
+) -> tuple[int, int, int, int]:
+    """Stop each edge on the node box so the stroke does not cross the label."""
+    sx, sy = src
+    dx, dy = dst
+    sy_mid = sy + _TOPO_NODE_H // 2
+    dy_mid = dy + _TOPO_NODE_H // 2
+    sx_mid = sx + _TOPO_NODE_W // 2
+    dx_mid = dx + _TOPO_NODE_W // 2
+    if sx + _TOPO_NODE_W <= dx:
+        return (sx + _TOPO_NODE_W, sy_mid, dx, dy_mid)
+    if dx + _TOPO_NODE_W <= sx:
+        return (sx, sy_mid, dx + _TOPO_NODE_W, dy_mid)
+    if sy + _TOPO_NODE_H <= dy:
+        return (sx_mid, sy + _TOPO_NODE_H, dx_mid, dy)
+    if dy + _TOPO_NODE_H <= sy:
+        return (sx_mid, sy, dx_mid, dy + _TOPO_NODE_H)
+    return (sx_mid, sy_mid, dx_mid, dy_mid)
+
+
 def _render_topology_svg(graph: TopologyGraph) -> str:
     """Render one inline SVG group per node and one line per edge."""
     positions, width, height = _topology_layout(graph)
@@ -270,22 +338,30 @@ def _render_topology_svg(graph: TopologyGraph) -> str:
     for edge in graph.edges:
         src = positions.get(edge.source_id, (0, 0))
         dst = positions.get(edge.target_id, (0, 0))
+        x1, y1, x2, y2 = _edge_endpoints(src, dst)
         lines.append(
             f'<line class="topo-edge" data-relation="{_esc(edge.relation)}" '
-            f'x1="{src[0]}" y1="{src[1]}" x2="{dst[0]}" y2="{dst[1]}" />'
+            f'x1="{x1}" y1="{y1}" x2="{x2}" y2="{y2}" />'
         )
     groups: list[str] = []
+    text_y = _TOPO_NODE_H // 2
     for node in graph.nodes:
         x, y = positions.get(node.node_id, (0, 0))
+        access = _esc(f"{node.node_type} {node.label}")
         groups.append(
             f'<g class="topo-node" data-node-id="{_esc(node.node_id)}" '
             f'data-node-type="{_esc(node.node_type)}" '
+            f'role="button" tabindex="0" aria-label="{access}" '
             f'transform="translate({x},{y})">'
-            f"<text>{_esc(node.label)}</text></g>"
+            f'<rect class="topo-node-box" width="{_TOPO_NODE_W}" '
+            f'height="{_TOPO_NODE_H}" rx="6" ry="6"></rect>'
+            f'<text x="12" y="{text_y}" dominant-baseline="middle">'
+            f"{_esc(node.label)}</text></g>"
         )
     return (
         f'<svg id="topology-svg" viewBox="0 0 {width} {height}" '
-        f'width="{width}" height="{height}">'
+        f'width="{width}" height="{height}" '
+        f'style="width:{width}px;height:{height}px">'
         f'{"".join(lines)}{"".join(groups)}</svg>'
     )
 
@@ -294,10 +370,18 @@ _WORKBENCH_V2_SCRIPT = """
 let TOPOLOGY_GRAPH = JSON.parse(document.getElementById('initial-topology').textContent);
 const FACEPLATE_TEMPLATES = __FACEPLATE_TEMPLATES__;
 const TOPO_COLUMN_ORDER = ['site', 'router', 'switch', 'vlan', 'subnet', 'port', 'equipment', 'ip'];
-const TOPO_COL_WIDTH = 180;
+const TOPO_NODE_W = 200;
+const TOPO_NODE_H = 56;
+const TOPO_COL_WIDTH = 224;
 const TOPO_ROW_HEIGHT = 56;
 const TOPO_PAD_X = 24;
 const TOPO_PAD_Y = 36;
+const FACEPLATE_STATE_LABEL = {
+  'faceplate-stale': 'Stale',
+  'faceplate-uplink': 'Uplink',
+  'faceplate-up': 'Up',
+  'faceplate-down': 'Down'
+};
 
 function templatePortsAttr(vendor, model) {
   const v = String(vendor || '').trim().toLowerCase();
@@ -375,6 +459,13 @@ function portIsUplink(device, port, graph) {
   return false;
 }
 
+function faceplateAccessName(portName, fill, poe) {
+  const state = FACEPLATE_STATE_LABEL[fill] || 'Down';
+  let name = portName + ', ' + state;
+  if (poe) name += ', PoE ' + poe;
+  return name;
+}
+
 function renderSwitchFaceplate() {
   const site = (WORKBENCH_STATE && WORKBENCH_STATE.site) || {};
   const devices = site.devices || [];
@@ -382,12 +473,15 @@ function renderSwitchFaceplate() {
   const selectedId = sel ? sel.value : '';
   const device = devices.find(d => d.device_id === selectedId) || devices[0] || null;
   const face = document.getElementById('switch-faceplate');
+  const heading = document.getElementById('faceplate-hostname');
+  if (heading) heading.textContent = device ? (device.hostname || '') : '';
   if (!face) return;
   if (!device) {
     face.setAttribute('data-device-id', '');
     face.setAttribute('data-rows', '2');
     face.setAttribute('data-faceplate-columns', '0');
     face.removeAttribute('data-template-ports');
+    face.style.gridTemplateColumns = '';
     face.innerHTML = '<em>No ports provisioned</em>';
     return;
   }
@@ -400,7 +494,7 @@ function renderSwitchFaceplate() {
   if (templatePorts) face.setAttribute('data-template-ports', templatePorts);
   else face.removeAttribute('data-template-ports');
   face.style.gridTemplateColumns = columns
-    ? 'repeat(' + columns + ', minmax(0, 1fr))'
+    ? 'repeat(' + columns + ', minmax(5rem, max-content))'
     : '';
   if (!ports.length) {
     face.innerHTML = '<em>No ports provisioned</em>';
@@ -408,6 +502,7 @@ function renderSwitchFaceplate() {
   }
   const results = (WORKBENCH_STATE && WORKBENCH_STATE.results) || [];
   const equipment = site.equipment || [];
+  const activeName = (document.getElementById('pm-port-name').value || '');
   face.innerHTML = ports.map(port => {
     let fill = 'faceplate-down';
     if (portIsStale(device, port, results, equipment)) fill = 'faceplate-stale';
@@ -417,9 +512,16 @@ function renderSwitchFaceplate() {
     const badge = poe
       ? '<span class="' + 'faceplate-poe-badge' + '">' + escapeHtml(poe) + '</span>'
       : '';
+    const access = faceplateAccessName(port.name || '', fill, poe);
+    const selected = activeName && port.name === activeName;
     return '<button type="button" class="' + 'faceplate-port' + ' ' + fill
+      + (selected ? ' faceplate-selected' : '')
       + '" data-port-id="' + escapeHtml(port.port_id)
-      + '" data-port-name="' + escapeHtml(port.name) + '">'
+      + '" data-port-name="' + escapeHtml(port.name)
+      + '" title="' + escapeHtml(access)
+      + '" aria-label="' + escapeHtml(access) + '"'
+      + (selected ? ' aria-current="true"' : '')
+      + '>'
       + escapeHtml(port.name) + badge + '</button>';
   }).join('');
 }
@@ -451,30 +553,65 @@ function drawTopology(graph) {
   svg.setAttribute('viewBox', '0 0 ' + width + ' ' + height);
   svg.setAttribute('width', String(width));
   svg.setAttribute('height', String(height));
+  svg.style.width = width + 'px';
+  svg.style.height = height + 'px';
   const lines = edges.map(edge => {
     const src = positions[edge.source_id] || {x: 0, y: 0};
     const dst = positions[edge.target_id] || {x: 0, y: 0};
+    const ends = edgeEndpoints(src, dst);
     return '<line class="' + 'topo-edge' + '" data-relation="' + escapeHtml(edge.relation)
-      + '" x1="' + src.x + '" y1="' + src.y + '" x2="' + dst.x + '" y2="' + dst.y + '" />';
+      + '" x1="' + ends.x1 + '" y1="' + ends.y1 + '" x2="' + ends.x2 + '" y2="' + ends.y2 + '" />';
   }).join('');
+  const textY = TOPO_NODE_H / 2;
   const groups = nodes.map(node => {
     const pos = positions[node.node_id] || {x: 0, y: 0};
+    const access = (node.node_type || '') + ' ' + (node.label || '');
     return '<g class="' + 'topo-node' + '" data-node-id="' + escapeHtml(node.node_id)
       + '" data-node-type="' + escapeHtml(node.node_type)
-      + '" transform="translate(' + pos.x + ',' + pos.y + ')"><text>'
-      + escapeHtml(node.label) + '</text></g>';
+      + '" role="button" tabindex="0" aria-label="' + escapeHtml(access)
+      + '" transform="translate(' + pos.x + ',' + pos.y + ')">'
+      + '<rect class="topo-node-box" width="' + TOPO_NODE_W + '" height="' + TOPO_NODE_H
+      + '" rx="6" ry="6"></rect><text x="12" y="' + textY
+      + '" dominant-baseline="middle">' + escapeHtml(node.label) + '</text></g>';
   }).join('');
   svg.innerHTML = lines + groups;
   document.getElementById('topology-mermaid').innerHTML = escapeHtml((graph && graph.mermaid) || '');
 }
 
+function edgeEndpoints(src, dst) {
+  const syMid = src.y + TOPO_NODE_H / 2;
+  const dyMid = dst.y + TOPO_NODE_H / 2;
+  const sxMid = src.x + TOPO_NODE_W / 2;
+  const dxMid = dst.x + TOPO_NODE_W / 2;
+  if (src.x + TOPO_NODE_W <= dst.x) {
+    return {x1: src.x + TOPO_NODE_W, y1: syMid, x2: dst.x, y2: dyMid};
+  }
+  if (dst.x + TOPO_NODE_W <= src.x) {
+    return {x1: src.x, y1: syMid, x2: dst.x + TOPO_NODE_W, y2: dyMid};
+  }
+  if (src.y + TOPO_NODE_H <= dst.y) {
+    return {x1: sxMid, y1: src.y + TOPO_NODE_H, x2: dxMid, y2: dst.y};
+  }
+  if (dst.y + TOPO_NODE_H <= src.y) {
+    return {x1: sxMid, y1: src.y, x2: dxMid, y2: dst.y + TOPO_NODE_H};
+  }
+  return {x1: sxMid, y1: syMid, x2: dxMid, y2: dyMid};
+}
+
 async function refreshTopologyMap() {
-  const resp = await fetch('/api/topology');
-  if (!resp.ok) return;
-  const data = await resp.json();
-  TOPOLOGY_GRAPH = data;
-  drawTopology(data);
-  renderSwitchFaceplate();
+  try {
+    const resp = await fetch('/api/topology');
+    if (!resp.ok) {
+      showBanner('Topology map could not be refreshed.', true);
+      return;
+    }
+    const data = await resp.json();
+    TOPOLOGY_GRAPH = data;
+    drawTopology(data);
+    renderSwitchFaceplate();
+  } catch (err) {
+    showBanner('Topology map could not be refreshed.', true);
+  }
 }
 
 function fillPortManagerForm(deviceId, fields) {
@@ -566,12 +703,23 @@ function onFaceplatePortClick(btn) {
     connected_mac: port.connected_mac,
     connected_device_id: port.connected_device_id
   });
+  const nameField = document.getElementById('pm-port-name');
+  if (nameField && nameField.scrollIntoView) {
+    nameField.scrollIntoView({block: 'center'});
+  }
 }
 
 document.getElementById('pm-device-id').addEventListener('change', renderSwitchFaceplate);
 document.getElementById('topology-svg').addEventListener('click', ev => {
   const el = ev.target.closest ? ev.target.closest('.topo-node') : null;
   if (el) onTopologyNodeClick(el);
+});
+document.getElementById('topology-svg').addEventListener('keydown', ev => {
+  if (ev.key !== 'Enter' && ev.key !== ' ') return;
+  const el = ev.target.closest ? ev.target.closest('.topo-node') : null;
+  if (!el) return;
+  ev.preventDefault();
+  onTopologyNodeClick(el);
 });
 document.getElementById('switch-faceplate').addEventListener('click', ev => {
   const btn = ev.target.closest ? ev.target.closest('.faceplate-port') : null;
@@ -906,6 +1054,7 @@ header h1 {{ margin: 0; font-size: 1.35rem; }}
 }}
 .tabs {{
   display: flex;
+  flex-wrap: wrap;
   gap: 0.5rem;
   margin-bottom: 1rem;
   border-bottom: 1px solid var(--border);
@@ -1036,19 +1185,38 @@ th {{ background: var(--panel-alt); font-weight: 600; }}
   margin-bottom: 1rem;
   font-weight: 600;
 }}
-#topology-svg {{
-  width: 100%;
-  height: auto;
+.topology-scroll {{
+  overflow-x: auto;
+  max-width: 100%;
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: 8px;
 }}
+#topology-svg {{
+  display: block;
+  max-width: none;
+}}
 .topo-node {{ cursor: pointer; }}
+.topo-node-box {{
+  fill: var(--panel-alt);
+  stroke: var(--border);
+  stroke-width: 1;
+}}
 .topo-node text {{ fill: var(--text); font-size: 12px; }}
-.topo-edge {{ stroke: #64748b; stroke-width: 1.5; }}
-.topo-node.topo-selected {{ outline: 2px solid #38bdf8; }}
+.topo-edge {{ stroke: var(--insufficient); stroke-width: 1.5; }}
+.topo-node.topo-selected .topo-node-box,
+.topo-node:focus .topo-node-box {{
+  stroke: var(--accent);
+  stroke-width: 2;
+}}
+.topo-node.topo-selected {{ outline: 2px solid var(--accent); }}
+.topology-caption {{
+  margin: 0.75rem 0 0.35rem;
+  font-size: 0.82rem;
+  color: var(--muted);
+}}
 #topology-mermaid {{
-  margin-top: 0.75rem;
+  margin-top: 0;
   background: var(--panel);
   color: var(--muted);
   border: 1px solid var(--border);
@@ -1057,36 +1225,72 @@ th {{ background: var(--panel-alt); font-weight: 600; }}
   overflow: auto;
   white-space: pre-wrap;
 }}
-#switch-faceplate {{
-  display: grid;
-  grid-auto-flow: row;
-  grid-template-rows: repeat(2, auto);
-  gap: 0.35rem;
-  margin-bottom: 1rem;
+.faceplate-panel {{
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: 8px;
   padding: 0.75rem;
+  margin-bottom: 1rem;
+  max-width: 100%;
+}}
+.faceplate-heading {{
+  margin: 0 0 0.45rem;
+  font-size: 0.95rem;
+}}
+.faceplate-legend {{
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin: 0 0 0.6rem;
+  font-size: 0.82rem;
+  color: var(--text);
+}}
+.legend-swatch {{
+  display: inline-block;
+  width: 0.85rem;
+  height: 0.85rem;
+  border-radius: 3px;
+  margin-right: 0.3rem;
+  vertical-align: -0.15rem;
+  padding: 0;
+}}
+#switch-faceplate {{
+  display: grid;
+  grid-auto-flow: row;
+  grid-template-rows: repeat(2, auto);
+  justify-content: start;
+  gap: 0.35rem;
+  overflow-x: auto;
+  width: 100%;
+  max-width: 100%;
 }}
 .faceplate-port {{
   color: #fff;
   border: 1px solid rgba(15, 23, 42, 0.35);
   border-radius: 4px;
-  min-height: 2rem;
+  min-width: 5rem;
+  min-height: 2.75rem;
   font-size: 0.75rem;
   font-weight: 700;
   cursor: pointer;
   display: flex;
+  flex-direction: column;
   align-items: center;
-  justify-content: space-between;
-  gap: 0.25rem;
+  justify-content: center;
+  gap: 0.15rem;
   padding: 0.2rem 0.4rem;
+  white-space: nowrap;
 }}
-.faceplate-up {{ background: #10b981; }}
+.faceplate-port.faceplate-selected {{
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}}
+.faceplate-up {{ background: #10b981; color: #0f172a; }}
 .faceplate-down {{ background: #64748b; }}
 .faceplate-uplink {{ background: #4f46e5; }}
 .faceplate-stale {{ background: #e11d48; }}
 .faceplate-poe-badge {{ background: #f59e0b; color: #0f172a; border-radius: 999px; padding: 0 0.35rem; font-size: 0.68rem; }}
+.legend-swatch.faceplate-poe-badge {{ padding: 0; }}
 </style>
 </head>
 <body>
@@ -1292,7 +1496,10 @@ th {{ background: var(--panel-alt); font-weight: 600; }}
   </section>
 
   <section id="tab-topology" class="tab-panel">
-    {topology_svg}
+    <div id="topology-scroll" class="topology-scroll">
+      {topology_svg}
+    </div>
+    <p class="topology-caption">Mermaid source</p>
     <pre id="topology-mermaid">{mermaid_html}</pre>
   </section>
 

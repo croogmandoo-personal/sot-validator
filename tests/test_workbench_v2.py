@@ -196,7 +196,7 @@ def _faceplate_ports(face_html: str) -> list[dict[str, Any]]:
     ports: list[dict[str, Any]] = []
     for match in re.finditer(
         r'<button type="button" class="([^"]*)" data-port-id="([^"]*)" '
-        r'data-port-name="([^"]*)">(.*?)</button>',
+        r'data-port-name="([^"]*)"[^>]*>(.*?)</button>',
         face_html,
         re.DOTALL,
     ):
@@ -229,8 +229,9 @@ def _topo_nodes(svg: str) -> list[tuple[str, str, str]]:
     found: list[tuple[str, str, str]] = []
     for match in re.finditer(
         r'<g class="topo-node" data-node-id="([^"]*)" data-node-type="([^"]*)"[^>]*>'
-        r"\s*<text>([^<]*)</text>",
+        r".*?<text[^>]*>([^<]*)</text>",
         svg,
+        re.DOTALL,
     ):
         found.append(tuple(html.unescape(part) for part in match.groups()))  # type: ignore[misc]
     return found
@@ -356,6 +357,13 @@ def test_topology_script_wires_existing_editors_and_highlight() -> None:
         "vlan-id-input",
         "topo-selected",
         "nodeType === 'site' || nodeType === 'subnet'",
+        "ev.key !== 'Enter'",
+        "ev.key !== ' '",
+        "scrollIntoView",
+        "Topology map could not be refreshed.",
+        "faceplate-selected",
+        'role="button"',
+        'tabindex="0"',
     ):
         assert snippet in script
     assert re.search(r"\.topo-node\.topo-selected\s*\{[^}]*outline\s*:", page)
@@ -381,6 +389,15 @@ def test_sample_faceplate_shows_link_and_poe_for_core_switch() -> None:
     assert up["badge"] == "delivering"
     assert _fill_class(down["classes"]) == "faceplate-down"
     assert down["badge"] == "auto"
+    assert 'aria-label="1:1, Up, PoE delivering"' in face
+    assert 'title="1:1, Up, PoE delivering"' in face
+    assert 'aria-label="1:2, Down, PoE auto"' in face
+    assert 'minmax(5rem, max-content)' in face
+    assert '<strong id="faceplate-hostname">sw-core-01</strong>' in devices_tab
+    legend = re.search(r'<p class="faceplate-legend">(.*?)</p>', devices_tab)
+    assert legend is not None
+    for word in ("Up", "Down", "Uplink", "Stale", "PoE"):
+        assert word in legend.group(1)
 
 
 def test_faceplate_stale_wins_over_uplink_and_link_state() -> None:
@@ -666,3 +683,74 @@ def test_stale_result_name_marks_matching_port() -> None:
     page = render_workbench_html(state)
     port = _faceplate_ports(_element_by_id(page, "div", "switch-faceplate"))[0]
     assert _fill_class(port["classes"]) == "faceplate-stale"
+
+
+def _box_edge(src: tuple[int, int], dst: tuple[int, int]) -> tuple[int, int, int, int]:
+    """Mirror the page's edge endpoints: the stroke stops on the node box."""
+    node_w, node_h = 200, 56
+    sx, sy = src
+    dx, dy = dst
+    sy_mid, dy_mid = sy + node_h // 2, dy + node_h // 2
+    sx_mid, dx_mid = sx + node_w // 2, dx + node_w // 2
+    if sx + node_w <= dx:
+        return (sx + node_w, sy_mid, dx, dy_mid)
+    if dx + node_w <= sx:
+        return (sx, sy_mid, dx + node_w, dy_mid)
+    if sy + node_h <= dy:
+        return (sx_mid, sy + node_h, dx_mid, dy)
+    if dy + node_h <= sy:
+        return (sx_mid, sy, dx_mid, dy + node_h)
+    return (sx_mid, sy_mid, dx_mid, dy_mid)
+
+
+def test_map_and_faceplate_stay_readable() -> None:
+    page = render_workbench_html(WorkbenchState(_sample_site()))
+    svg = _element_by_id(page, "svg", "topology-svg")
+    width = re.search(r'\bwidth="(\d+)"', svg)
+    height = re.search(r'\bheight="(\d+)"', svg)
+    assert width is not None and height is not None
+    assert f'style="width:{width.group(1)}px;height:{height.group(1)}px"' in svg
+    assert 'role="button"' in svg
+    assert 'tabindex="0"' in svg
+    assert 'class="topo-node-box"' in svg
+    assert 'height="56"' in svg
+    node_id, node_type, label = _topo_nodes(svg)[0]
+    access = html.escape(f"{node_type} {label}", quote=True)
+    assert f'aria-label="{access}"' in svg
+    positions = {
+        html.unescape(match.group(1)): (int(match.group(2)), int(match.group(3)))
+        for match in re.finditer(
+            r'data-node-id="([^"]*)"[^>]*transform="translate\((\d+),(\d+)\)"',
+            svg,
+        )
+    }
+    assert node_id in positions
+    for edge in _expected_topology(WorkbenchState(_sample_site()))["edges"]:
+        x1, y1, x2, y2 = _box_edge(positions[edge["source_id"]], positions[edge["target_id"]])
+        assert f'x1="{x1}" y1="{y1}" x2="{x2}" y2="{y2}"' in svg
+    panel = _element_by_id(page, "section", "tab-topology")
+    assert "Mermaid source" in panel
+    assert 'class="topology-scroll"' in panel
+    svg_rule = re.search(r"#topology-svg\s*\{([^}]*)\}", page)
+    assert svg_rule is not None
+    assert "width: 100%" not in svg_rule.group(1)
+    scroll_rule = re.search(r"\.topology-scroll\s*\{([^}]*)\}", page)
+    assert scroll_rule is not None and "overflow-x: auto" in scroll_rule.group(1)
+    face_rule = re.search(r"#switch-faceplate\s*\{([^}]*)\}", page)
+    assert face_rule is not None and "overflow-x: auto" in face_rule.group(1)
+    tabs_rule = re.search(r"\.tabs\s*\{([^}]*)\}", page)
+    assert tabs_rule is not None and "flex-wrap: wrap" in tabs_rule.group(1)
+    up_rule = re.search(r"\.faceplate-up\s*\{([^}]*)\}", page)
+    assert up_rule is not None
+    assert "#10b981" in up_rule.group(1)
+    assert "#0f172a" in up_rule.group(1)
+    port_rule = re.search(r"\.faceplate-port\s*\{([^}]*)\}", page)
+    assert port_rule is not None
+    assert "flex-direction: column" in port_rule.group(1)
+    assert "min-width: 5rem" in port_rule.group(1)
+    edge_rule = re.search(r"\.topo-edge\s*\{([^}]*)\}", page)
+    assert edge_rule is not None and "var(--insufficient)" in edge_rule.group(1)
+    selected_rule = re.search(r"\.topo-node\.topo-selected\s*\{([^}]*)\}", page)
+    assert selected_rule is not None
+    assert "outline" in selected_rule.group(1)
+    assert "var(--accent)" in selected_rule.group(1)
