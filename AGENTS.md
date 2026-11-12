@@ -27,6 +27,7 @@
   - `curation/` — Phase 8 SQLite/JSON operator curation overlay store (`CurationStore`, `ItemEditPatch`, `AuditLogEntry`, `apply_curation_overlay`).
   - `topology/` — Phase 9 network role & VLAN heuristic identifier (`NetworkRoleIdentifier`, `ConsolidatedRouter`), device type catalog & port range builder (`DeviceTypeCatalog`, `DevicePortManager`), hierarchical topology graph builder (`TopologyGraphBuilder`, `TopologyGraph`), and switch FDB / Bridge-MIB MAC-to-port mapper with trunk/access inferrer (`fdb_mapper.py`: `FdbTableParser`, `SwitchFdbPortMapper`).
   - `workbench/` — Phase 8/9 self-contained interactive HTTP Web Workbench server (`WorkbenchServer`, `WorkbenchState`), JSON REST API including read-only `GET /api/topology`, and HTML5/SVG topology & inventory curation UI (`render_workbench_html`) with a Topology Map tab and a switch faceplate.
+  - `quality/` — Phase 13 SoT data-quality conflict detector (`DataQualityChecker`, `QualityFinding`) with deterministic duplicate IP/MAC, out-of-block IP, orphan-reference and hostname-mismatch rules.
   - `cli.py` — Unified CLI runner (`extract`, `validate`, `report`, `run`, `history`, `quarantine`, `remediate`, `reconcile`, `campaign`, `preflight`, `reclaim-ports`, `export-modern-sot` / `migrate-export`, `parity-check` / `migration-parity`, `ups-health`, `itsm` / `itsm-sync`, `discover`, `serve` [e.g. `sot-validator serve --port <port>`], `curate`, `topology`).
 - `tests/` — `pytest` unit and integration tests.
 - `docs/` — Architecture, discovery notes, and SoT API/schema specifications.
