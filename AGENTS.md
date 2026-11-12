@@ -23,7 +23,11 @@
   - `connectors/` — Phase 4 live pilot connector transports and pre-flight cutover validator.
   - `migration/` — Phase 5 NetBox / Nautobot golden inventory exporter and dual-run parity / readiness scorecard checker.
   - `itsm/` — Phase 6 ServiceNow / Jira change-ticket governance and approval synchronization sink.
-  - `cli.py` — Unified CLI runner (`extract`, `validate`, `report`, `run`, `history`, `quarantine`, `remediate`, `reconcile`, `campaign`, `reclaim-ports`, `migrate-export`, `migration-parity`, `ups-health`, `itsm-sync`).
+  - `discovery/` — Phase 7 two-stage `/16`-to-`/24` live subnet discovery scanner (`SubnetDiscoveryScanner`, `DiscoveryConfig`, `DiscoveredHost`) and `Site` snapshot bootstrapper.
+  - `curation/` — Phase 8 SQLite/JSON operator curation overlay store (`CurationStore`, `ItemEditPatch`, `AuditLogEntry`, `apply_curation_overlay`).
+  - `topology/` — Phase 9 network role & VLAN heuristic identifier (`NetworkRoleIdentifier`, `ConsolidatedRouter`), device type catalog & port range builder (`DeviceTypeCatalog`, `DevicePortManager`), and hierarchical topology graph builder (`TopologyGraphBuilder`, `TopologyGraph`).
+  - `workbench/` — Phase 8/9 self-contained interactive HTTP Web Workbench server (`WorkbenchServer`, `WorkbenchState`), JSON REST API, and HTML5/SVG topology & inventory curation UI (`render_workbench_html`).
+  - `cli.py` — Unified CLI runner (`extract`, `validate`, `report`, `run`, `history`, `quarantine`, `remediate`, `reconcile`, `campaign`, `preflight`, `reclaim-ports`, `export-modern-sot` / `migrate-export`, `parity-check` / `migration-parity`, `ups-health`, `itsm` / `itsm-sync`, `discover`, `serve` [e.g. `sot-validator serve --port <port>`], `curate`, `topology`).
 - `tests/` — `pytest` unit and integration tests.
 - `docs/` — Architecture, discovery notes, and SoT API/schema specifications.
 - `factory/` — Software factory scripts and gate configuration (`factory/checks.sh` and `factory/config.json` are protected paths).
