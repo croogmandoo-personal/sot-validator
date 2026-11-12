@@ -113,6 +113,7 @@ To minimize load on both the legacy SoT and live network infrastructure, signals
 - **Issue 4 (Passive Signals)**: Implement evaluators for ARP discovery recency, Extreme switch port link/admin/PoE state, and SoT last-seen timestamps.
 - **Issue 5 (Active Probes)**: Implement bounded-concurrency ICMP reachability (strictly scoped to allocated `/24` blocks / assigned IPs, never full `/16` sweeps) and SNMP/HTTP collectors tailored for Extreme switches and APC UPSs.
 - **Issue 6 (Multi-vCenter VM Correlation)**: Implement multi-instance VMware vCenter correlation (power state, VMware Tools heartbeat, MAC/IP matching) handling the ~90% Windows VM footprint.
+- **Issue 62 (Proxmox VE & Docker/Portainer Correlation, `src/sot_validator/signals/proxmox_containers.py`)**: `ProxmoxContainerCollector` emits `VM_POWER_STATE` for homelab/edge Proxmox VE (`:8006`) QEMU VMs and LXC containers and Docker/Portainer (`:9000`) containers, correlating by IP, MAC (Proxmox OUI `bc:24:11`), VMID, and name from read-only snapshots, and `enrich_site_with_guests` links guests to their host via `hypervisor_id` so the topology graph emits `hosts_vm` edges.
 
 ### Phase 1C: Classification Engine & Reporting
 - **Issue 7 (Classification Engine)**: Implement the rule evaluation engine that combines signals into the 4 target classifications with an explicit evidence trail and configurable thresholds (accounting for Windows VMs blocking ICMP when vCenter/ARP shows active).
