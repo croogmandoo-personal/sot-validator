@@ -28,8 +28,10 @@
   - `topology/` — Phase 9 network role & VLAN heuristic identifier (`NetworkRoleIdentifier`, `ConsolidatedRouter`), device type catalog & port range builder (`DeviceTypeCatalog`, `DevicePortManager`), hierarchical topology graph builder (`TopologyGraphBuilder`, `TopologyGraph`), and switch FDB / Bridge-MIB MAC-to-port mapper with trunk/access inferrer (`fdb_mapper.py`: `FdbTableParser`, `SwitchFdbPortMapper`).
   - `workbench/` — Phase 8/9 self-contained interactive HTTP Web Workbench server (`WorkbenchServer`, `WorkbenchState`), JSON REST API including read-only `GET /api/topology`, and HTML5/SVG topology & inventory curation UI (`render_workbench_html`) with a Topology Map tab and a switch faceplate.
   - `quality/` — Phase 13 SoT data-quality conflict detector (`DataQualityChecker`, `QualityFinding`) with deterministic duplicate IP/MAC, out-of-block IP, orphan-reference and hostname-mismatch rules.
+  - `config/` — Unified TOML fleet configuration loader (`load_config(path) -> AppConfig`, `ConfigError`, `SecretValue`) validating `10.x.0.0/16` site blocks, `/24` active subnets, thresholds and concurrency caps; secrets must be `${env:NAME}` references resolved from the environment and are always redacted. Not yet wired to a CLI flag.
   - `cli.py` — Unified CLI runner (`extract`, `validate`, `report`, `run`, `history`, `quarantine`, `remediate`, `reconcile`, `campaign`, `preflight`, `reclaim-ports`, `export-modern-sot` / `migrate-export`, `parity-check` / `migration-parity`, `ups-health`, `itsm` / `itsm-sync`, `discover`, `serve` [e.g. `sot-validator serve --port <port>`], `curate`, `topology`).
 - `tests/` — `pytest` unit and integration tests.
+- `examples/` — Example fleet configuration (`sot-validator.example.toml`).
 - `docs/` — Architecture, discovery notes, and SoT API/schema specifications.
 - `factory/` — Software factory scripts and gate configuration (`factory/checks.sh` and `factory/config.json` are protected paths).
 
