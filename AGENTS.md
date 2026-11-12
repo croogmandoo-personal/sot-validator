@@ -13,7 +13,7 @@
 - `src/sot_validator/` — Core Python package:
   - `models/` — Canonical domain models (`Site`, `NetworkDevice`, `Port`, `VLAN`, `Subnet`, `IPAddress`, `ArpEntry`, `Equipment`, `ValidationSignal`, `ValidationResult`).
   - `extraction/` — Read-only batch extractor (`BatchExtractor`, `SnapshotStore`, `SqlExportSoTClient`, `HtmlScraperSoTClient`, `FixtureSoTClient`).
-  - `signals/` — Passive (`arp.py`, `port_state.py`, `last_seen.py`), `/24`-scoped active (`icmp.py`, `management.py`), multi-vCenter (`hypervisor.py`), Phase 4 AD/DNS/DHCP (`directory_dns.py`), and Phase 6 APC UPS telemetry (`ups_health.py`) collectors.
+  - `signals/` — Passive (`arp.py`, `port_state.py`, `last_seen.py`), `/24`-scoped active (`icmp.py`, `management.py`), multi-vCenter (`hypervisor.py`), Phase 4 AD/DNS/DHCP (`directory_dns.py`), Phase 6 APC UPS telemetry (`ups_health.py`), and Proxmox VE `:8006` / Docker-Portainer `:9000` guest & container (`proxmox_containers.py`) collectors.
   - `classifier/` — Deterministic multi-signal `ClassificationEngine` and `ClassificationPolicy`.
   - `reporting/` — Multi-format report generators (`JSON`, `CSV`, `Markdown`, and interactive `HTML` operations dashboard).
   - `history/` — Phase 2 multi-run validation history store, stale streak tracker, and state-drift analyzer.
