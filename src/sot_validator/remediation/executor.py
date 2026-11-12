@@ -1144,6 +1144,11 @@ class RemediationExecutor:
         journal_path: Optional[Path | str] = None,
         script_generator: Optional[SqlRemediationScriptGenerator] = None,
         strict_approval: bool = False,
+        require_itsm_approval: bool = False,
+        itsm_sink: Optional[Any] = None,
+        itsm_verifier: Optional[Any] = None,
+        itsm_ticket_id: Optional[str] = None,
+        itsm_ticket: Optional[Any] = None,
     ) -> None:
         if not isinstance(dry_run, bool):
             raise RemediationExecutionError("dry_run must be a boolean")
@@ -1157,6 +1162,11 @@ class RemediationExecutor:
         self.dry_run = dry_run
         self.confirm_write = confirm_write
         self.strict_approval = bool(strict_approval)
+        self.require_itsm_approval = bool(require_itsm_approval)
+        self.itsm_sink = itsm_sink
+        self.itsm_verifier = itsm_verifier
+        self.itsm_ticket_id = itsm_ticket_id
+        self.itsm_ticket = itsm_ticket
 
         resolved_journal_arg = journal if journal is not None else journal_path
         if isinstance(resolved_journal_arg, RollbackJournal):
@@ -1188,6 +1198,11 @@ class RemediationExecutor:
         execution_id: Optional[str] = None,
         executed_at: Optional[datetime | str] = None,
         reviewer: Optional[str] = None,
+        require_itsm_approval: Optional[bool] = None,
+        itsm_sink: Optional[Any] = None,
+        itsm_verifier: Optional[Any] = None,
+        itsm_ticket_id: Optional[str] = None,
+        itsm_ticket: Optional[Any] = None,
     ) -> RemediationExecutionResult:
         """Execute an operator-approved RemediationApprovalManifest after gate verification."""
         effective_dry_run = self.dry_run if dry_run is None else dry_run
@@ -1196,6 +1211,30 @@ class RemediationExecutor:
         )
         effective_strict_approval = (
             self.strict_approval if strict_approval is None else strict_approval
+        )
+        effective_require_itsm = (
+            self.require_itsm_approval
+            if require_itsm_approval is None
+            else bool(require_itsm_approval)
+        )
+        effective_itsm_sink = (
+            itsm_sink if itsm_sink is not None else self.itsm_sink
+        )
+        effective_itsm_verifier = (
+            itsm_verifier if itsm_verifier is not None else self.itsm_verifier
+        )
+        effective_ticket_ref = (
+            itsm_ticket
+            if itsm_ticket is not None
+            else (
+                itsm_ticket_id
+                if itsm_ticket_id is not None
+                else (
+                    self.itsm_ticket
+                    if self.itsm_ticket is not None
+                    else self.itsm_ticket_id
+                )
+            )
         )
 
         if not isinstance(effective_dry_run, bool):
@@ -1208,6 +1247,29 @@ class RemediationExecutor:
         approved_entries, skipped_entries = _validate_and_filter_manifest_entries(
             manifest, strict_approval=bool(effective_strict_approval)
         )
+
+        if (
+            effective_require_itsm
+            or effective_ticket_ref is not None
+            or effective_itsm_verifier is not None
+        ):
+            from sot_validator.itsm.tickets import ItsmGateVerifier
+
+            if effective_ticket_ref is None:
+                raise RemediationExecutionError(
+                    "ITSM approval gate requires an itsm_ticket or itsm_ticket_id when require_itsm_approval=True"
+                )
+            verifier = (
+                effective_itsm_verifier
+                if isinstance(effective_itsm_verifier, ItsmGateVerifier)
+                else ItsmGateVerifier(sink=effective_itsm_sink)
+            )
+            verifier.require_change_ticket_approved(
+                effective_ticket_ref,
+                expected_sha256=manifest.manifest_sha256,
+                manifest=manifest,
+                sink=effective_itsm_sink,
+            )
 
         resolved_exec_id = (
             _require_non_empty_str(execution_id, "execution_id").strip()
