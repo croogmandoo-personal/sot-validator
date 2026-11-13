@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from enum import Enum
 import ipaddress
 import json
@@ -13,6 +13,7 @@ import sqlite3
 from typing import Any, ClassVar, Optional
 import uuid
 
+from sot_validator.history.retention import PruneReport, RetentionPolicy
 from sot_validator.models import (
     Site,
     ValidationClassification,
@@ -598,6 +599,9 @@ _MIGRATIONS: list[Callable[[sqlite3.Connection], None]] = [
 
 HISTORY_SCHEMA_VERSION: int = len(_MIGRATIONS)
 
+# Bound on SQL parameters per IN (...) clause when selecting or deleting pruned runs.
+_PRUNE_CHUNK_SIZE = 500
+
 
 class HistoryStore:
     """SQLite-backed multi-run validation history ledger, streak tracker, and drift analyzer."""
@@ -661,11 +665,27 @@ class HistoryStore:
         self.close()
 
     def _next_generated_run_id(self) -> str:
+        # Base the sequence on the highest run_seq ever issued, not the row
+        # count, so pruned runs can never make a generated ID repeat.
         row = self._conn.execute(
-            "SELECT COUNT(*) AS cnt FROM validation_runs"
+            """
+            SELECT MAX(
+                COALESCE((SELECT MAX(run_seq) FROM validation_runs), 0),
+                COALESCE(
+                    (SELECT seq FROM sqlite_sequence WHERE name = 'validation_runs'),
+                    0
+                )
+            ) AS last_seq
+            """
         ).fetchone()
-        seq = (int(row["cnt"]) if row is not None else 0) + 1
-        return f"run-{seq:04d}-{uuid.uuid4().hex[:8]}"
+        seq = int(row["last_seq"]) + 1
+        while True:
+            candidate = f"run-{seq:04d}-{uuid.uuid4().hex[:8]}"
+            taken = self._conn.execute(
+                "SELECT 1 FROM validation_runs WHERE run_id = ?", (candidate,)
+            ).fetchone()
+            if taken is None:
+                return candidate
 
     @staticmethod
     def _row_to_run_record(row: sqlite3.Row) -> ValidationRunRecord:
@@ -995,6 +1015,118 @@ class HistoryStore:
             "SELECT * FROM validation_runs ORDER BY run_seq ASC"
         ).fetchall()
         return [self._row_to_run_record(r) for r in rows]
+
+    def _select_prunable_runs(
+        self, policy: RetentionPolicy, age_cutoff: Optional[datetime]
+    ) -> list[str]:
+        rows = self._conn.execute(
+            """
+            SELECT run_seq, run_id, recorded_at, site_ids_json
+            FROM validation_runs ORDER BY run_seq DESC
+            """
+        ).fetchall()
+        kept_per_site: dict[str, int] = {}
+        selected: list[str] = []
+        for index, row in enumerate(rows):
+            site_ids = set(json.loads(row["site_ids_json"]))
+            marked = False
+            if age_cutoff is not None:
+                recorded_at = normalize_utc_datetime(
+                    row["recorded_at"], field_name="recorded_at"
+                )
+                marked = recorded_at < age_cutoff
+            if policy.max_runs_per_site is not None and site_ids:
+                protected = False
+                for site_id in site_ids:
+                    kept_per_site[site_id] = kept_per_site.get(site_id, 0) + 1
+                    if kept_per_site[site_id] <= policy.max_runs_per_site:
+                        protected = True
+                marked = marked or not protected
+            # The run with the highest run_seq is always kept.
+            if marked and index > 0:
+                selected.append(row["run_id"])
+        selected.reverse()
+        return selected
+
+    def _count_or_delete_drift_events(
+        self, run_ids: Sequence[str], *, delete: bool
+    ) -> int:
+        total = 0
+        for start in range(0, len(run_ids), _PRUNE_CHUNK_SIZE):
+            chunk = list(run_ids[start : start + _PRUNE_CHUNK_SIZE])
+            placeholders = ", ".join("?" for _ in chunk)
+            if delete:
+                cursor = self._conn.execute(
+                    f"DELETE FROM drift_events WHERE run_id IN ({placeholders})",
+                    chunk,
+                )
+                total += cursor.rowcount
+            else:
+                row = self._conn.execute(
+                    "SELECT COUNT(*) AS cnt FROM drift_events "
+                    f"WHERE run_id IN ({placeholders})",
+                    chunk,
+                ).fetchone()
+                total += int(row["cnt"])
+        return total
+
+    def prune_runs(
+        self,
+        policy: RetentionPolicy,
+        *,
+        now: Optional[datetime | str] = None,
+        dry_run: bool = True,
+    ) -> PruneReport:
+        """Select, and unless ``dry_run`` delete, runs and drift rows outside ``policy``.
+
+        The newest run (highest ``run_seq``) is always kept and ``item_streaks``
+        is never read or written.
+        """
+        if not isinstance(policy, RetentionPolicy):
+            raise ValueError("policy must be a RetentionPolicy")
+        now_dt = (
+            normalize_utc_datetime(now, field_name="now")
+            if now is not None
+            else datetime.now(timezone.utc)
+        )
+        age_cutoff = (
+            now_dt - timedelta(days=policy.max_age_days)
+            if policy.max_age_days is not None
+            else None
+        )
+
+        if dry_run:
+            run_ids = self._select_prunable_runs(policy, age_cutoff)
+            drift_count = self._count_or_delete_drift_events(run_ids, delete=False)
+        else:
+            self._conn.execute("BEGIN IMMEDIATE")
+            try:
+                run_ids = self._select_prunable_runs(policy, age_cutoff)
+                drift_count = self._count_or_delete_drift_events(
+                    run_ids, delete=True
+                )
+                for start in range(0, len(run_ids), _PRUNE_CHUNK_SIZE):
+                    chunk = run_ids[start : start + _PRUNE_CHUNK_SIZE]
+                    placeholders = ", ".join("?" for _ in chunk)
+                    self._conn.execute(
+                        f"DELETE FROM validation_runs WHERE run_id IN ({placeholders})",
+                        chunk,
+                    )
+                self._conn.execute("COMMIT")
+            except BaseException:
+                if self._conn.in_transaction:
+                    self._conn.execute("ROLLBACK")
+                raise
+
+        return PruneReport(
+            dry_run=dry_run,
+            policy=policy,
+            now=now_dt,
+            age_cutoff=age_cutoff,
+            run_ids=run_ids,
+            run_count=len(run_ids),
+            drift_event_count=drift_count,
+        )
 
     def get_item_streak(
         self,

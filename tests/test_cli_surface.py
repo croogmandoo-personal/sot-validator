@@ -247,6 +247,16 @@ NAMESPACE_CASES = [
         id="history",
     ),
     pytest.param(
+        ["history-prune", "--config", "fleet.toml"],
+        {"subcommand": "history-prune",
+         "db_path": Path("history.db"),
+         "config": Path("fleet.toml"),
+         "apply": False,
+         "now": None,
+         "func": "cmd_history_prune"},
+        id="history-prune",
+    ),
+    pytest.param(
         ["quarantine", "--results-file", "results.json", "--approve-all", "--reviewer", "ops"],
         {"subcommand": "quarantine",
          "results_file": Path("results.json"),

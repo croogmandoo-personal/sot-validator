@@ -16,7 +16,9 @@ REDACTED = "***"
 MAX_PROBES_PER_SITE_CAP = 64
 SNMP_VERSIONS: tuple[str, ...] = ("v1", "v2c")
 
-_ROOT_KEYS = frozenset({"policy", "sites", "vcenters", "snmp_profiles", "proxmox"})
+_ROOT_KEYS = frozenset(
+    {"policy", "retention", "sites", "vcenters", "snmp_profiles", "proxmox"}
+)
 _POLICY_DAY_PAIRS: tuple[tuple[str, str], ...] = (
     ("arp_active_within_days", "arp_stale_after_days"),
     ("last_seen_active_within_days", "last_seen_stale_after_days"),
@@ -27,6 +29,7 @@ _SNMP_KEYS = frozenset({"name", "version", "community"})
 _PROXMOX_KEYS = frozenset(
     {"name", "host", "port", "token_id", "token_secret", "verify_tls"}
 )
+_RETENTION_KEYS = frozenset({"max_age_days", "max_runs_per_site"})
 
 
 class ConfigError(ValueError):
@@ -58,6 +61,12 @@ class PolicyConfig:
     quarantine_min_stale_runs: int = 3
     max_concurrent_probes_per_site: int = 32
     max_concurrent_sites: int = 4
+
+
+@dataclass(frozen=True)
+class RetentionConfig:
+    max_age_days: Optional[int] = None
+    max_runs_per_site: Optional[int] = None
 
 
 @dataclass(frozen=True)
@@ -102,6 +111,7 @@ class AppConfig:
     vcenters: tuple[VCenterConfig, ...]
     snmp_profiles: tuple[SnmpProfile, ...]
     proxmox: tuple[ProxmoxConfig, ...]
+    retention: RetentionConfig = RetentionConfig()
 
     def to_dict(self) -> dict[str, Any]:
         """Return a JSON-serialisable dict with networks as strings and secrets redacted."""
@@ -115,6 +125,10 @@ class AppConfig:
                 "quarantine_min_stale_runs": self.policy.quarantine_min_stale_runs,
                 "max_concurrent_probes_per_site": self.policy.max_concurrent_probes_per_site,
                 "max_concurrent_sites": self.policy.max_concurrent_sites,
+            },
+            "retention": {
+                "max_age_days": self.retention.max_age_days,
+                "max_runs_per_site": self.retention.max_runs_per_site,
             },
             "sites": [
                 {
@@ -274,6 +288,7 @@ def load_config(path: str | os.PathLike) -> AppConfig:
     return AppConfig(
         source_path=Path(source),
         policy=_parse_policy(root),
+        retention=_parse_retention(root),
         sites=_parse_sites(root),
         vcenters=_parse_named(root, "vcenters", _parse_vcenter),
         snmp_profiles=_parse_named(root, "snmp_profiles", _parse_snmp_profile),
@@ -352,6 +367,21 @@ def _parse_policy(root: _Table) -> PolicyConfig:
             "max_concurrent_sites", default=defaults.max_concurrent_sites, minimum=1
         ),
     )
+
+
+def _parse_retention(root: _Table) -> RetentionConfig:
+    value = root.data.get("retention", _MISSING)
+    if value is _MISSING:
+        return RetentionConfig()
+    if not isinstance(value, dict):
+        raise root.error("retention", "expected a table ([retention])")
+    table = _Table(root.source, "retention", value)
+    table.reject_unknown(_RETENTION_KEYS)
+    limits = {
+        key: table.integer(key, minimum=1) if key in table.data else None
+        for key in sorted(_RETENTION_KEYS)
+    }
+    return RetentionConfig(**limits)
 
 
 def _parse_network(table: _Table, key: str, raw: str, label: str) -> ipaddress.IPv4Network:

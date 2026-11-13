@@ -101,7 +101,7 @@ PYTHONPATH=src python3 -m sot_validator report \
   --html-dashboard
 ```
 
-### Phase 2: Historical Tracking, Quarantine & Gated Remediation (`history`, `quarantine`, `remediate`)
+### Phase 2: Historical Tracking, Quarantine & Gated Remediation (`history`, `history-prune`, `quarantine`, `remediate`)
 
 ```bash
 # Record validation runs into HistoryStore and inspect streaks / drift events
@@ -109,6 +109,11 @@ PYTHONPATH=src python3 -m sot_validator history \
   --db-path ./output/history.db \
   --record ./output/validation_results.json \
   --output-dir ./output
+
+# Preview which old runs and drift rows the fleet [retention] policy would prune (dry run),
+# then delete them; the newest run is always kept and item streaks are never touched
+PYTHONPATH=src python3 -m sot_validator history-prune --config ./sot-validator.toml --db-path ./output/history.db
+PYTHONPATH=src python3 -m sot_validator history-prune --config ./sot-validator.toml --db-path ./output/history.db --apply
 
 # Evaluate stale streaks against QuarantinePolicy and approve eligible entries
 PYTHONPATH=src python3 -m sot_validator quarantine \
@@ -210,7 +215,9 @@ PYTHONPATH=src python3 -m sot_validator itsm \
 
 `sot_validator.config.load_config(path)` reads a single TOML fleet file (sites with their `10.x.0.0/16` block and active `/24` subnets, vCenters, SNMP profiles, Proxmox nodes and a `[policy]` table of thresholds and concurrency limits) and returns a frozen, validated `AppConfig`. See [`examples/sot-validator.example.toml`](examples/sot-validator.example.toml) for the full schema.
 
-Secrets (`password`, `community`, `token_secret`) must be written as `${env:NAME}` references, for example `password = "${env:SOT_VCENTER_PASSWORD}"`; the value is read from the environment at load time, literal secrets are rejected, and resolved secrets are redacted as `***` in `repr`, `str` and `to_dict()`. The loader is not yet wired to a CLI flag.
+Secrets (`password`, `community`, `token_secret`) must be written as `${env:NAME}` references, for example `password = "${env:SOT_VCENTER_PASSWORD}"`; the value is read from the environment at load time, literal secrets are rejected, and resolved secrets are redacted as `***` in `repr`, `str` and `to_dict()`.
+
+The optional `[retention]` table sets history retention limits: `max_age_days` prunes runs older than that many days, and `max_runs_per_site` keeps only the newest N runs of each site (a multi-site run is kept while any of its sites still keeps it). Both keys are optional positive integers, and leaving them out disables pruning. The only command that reads the fleet file is `history-prune --config <file>`, which is a dry run unless `--apply` is given and works on SQLite history databases only; no other command reads this file yet.
 
 ```bash
 export SOT_VCENTER_PASSWORD=... SOT_SNMP_COMMUNITY=... SOT_PROXMOX_TOKEN_SECRET=...

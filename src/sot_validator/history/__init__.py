@@ -10,6 +10,7 @@ from sot_validator.history.ledger import (
     SubnetUtilizationSummary,
     ValidationRunRecord,
 )
+from sot_validator.history.retention import PruneReport, RetentionPolicy
 
 __all__ = [
     "HISTORY_SCHEMA_VERSION",
@@ -18,6 +19,8 @@ __all__ = [
     "HistorySchemaVersionError",
     "HistoryStore",
     "ItemStreakSummary",
+    "PruneReport",
+    "RetentionPolicy",
     "SubnetUtilizationSummary",
     "ValidationRunRecord",
 ]
