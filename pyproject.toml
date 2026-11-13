@@ -7,7 +7,7 @@ name = "sot-validator"
 version = "0.1.0"
 description = "Read-only batch inventory validation system for legacy Network Source of Truth"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 dependencies = []
 
 [tool.setuptools.packages.find]
@@ -16,3 +16,5 @@ where = ["src"]
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 testpaths = ["tests"]
+markers = ["perf: full 100-site pipeline performance budgets (run with -m perf)"]
+addopts = "-m \"not perf\""

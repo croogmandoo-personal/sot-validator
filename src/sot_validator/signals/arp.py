@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+from functools import lru_cache
 from typing import Any, Iterable, Optional, Sequence
 
 from sot_validator.models import (
@@ -29,6 +30,12 @@ from sot_validator.signals.base import (
 def _normalize_mac(mac: Optional[str]) -> Optional[str]:
     if not isinstance(mac, str):
         return None
+    return _normalize_mac_str(mac)
+
+
+# Called for every IP record on every equipment target, so cache the string work
+@lru_cache(maxsize=65536)
+def _normalize_mac_str(mac: str) -> Optional[str]:
     cleaned = mac.strip().lower()
     if not cleaned:
         return None

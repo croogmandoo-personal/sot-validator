@@ -206,10 +206,27 @@ PYTHONPATH=src python3 -m sot_validator itsm \
   --output-dir ./output
 ```
 
+## Fleet Configuration (TOML)
+
+`sot_validator.config.load_config(path)` reads a single TOML fleet file (sites with their `10.x.0.0/16` block and active `/24` subnets, vCenters, SNMP profiles, Proxmox nodes and a `[policy]` table of thresholds and concurrency limits) and returns a frozen, validated `AppConfig`. See [`examples/sot-validator.example.toml`](examples/sot-validator.example.toml) for the full schema.
+
+Secrets (`password`, `community`, `token_secret`) must be written as `${env:NAME}` references, for example `password = "${env:SOT_VCENTER_PASSWORD}"`; the value is read from the environment at load time, literal secrets are rejected, and resolved secrets are redacted as `***` in `repr`, `str` and `to_dict()`. The loader is not yet wired to a CLI flag.
+
+```bash
+export SOT_VCENTER_PASSWORD=... SOT_SNMP_COMMUNITY=... SOT_PROXMOX_TOKEN_SECRET=...
+PYTHONPATH=src python3 -c "from sot_validator.config import load_config; print(load_config('examples/sot-validator.example.toml'))"
+```
+
 ## Development & Checks
 
 Run the repository verification gate:
 
 ```bash
 bash factory/checks.sh
+```
+
+Run the 100-site synthetic fleet performance budgets (`tests/perf/`). They are marked `perf` and excluded from the default `python3 -m pytest` run by `addopts` in `pyproject.toml`; a later `-m` overrides that:
+
+```bash
+python3 -m pytest -m perf
 ```

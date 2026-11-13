@@ -1,0 +1,55 @@
+# Example sot-validator fleet configuration.
+#
+# Load it with sot_validator.config.load_config(path). Every site owns one
+# 10.x.0.0/16 block, and active probing is scoped to its listed /24 subnets.
+# Unknown keys are rejected.
+#
+# Secrets (vCenter passwords, SNMP communities, Proxmox token secrets) must be
+# written as ${env:NAME} references; the value is read from the environment at
+# load time and literal secrets are refused. Any other string that is exactly a
+# ${env:NAME} reference is resolved the same way.
+
+# Thresholds and concurrency limits. Every key is optional; the values below
+# are the defaults.
+[policy]
+arp_active_within_days = 7.0
+arp_stale_after_days = 30.0
+last_seen_active_within_days = 7.0
+last_seen_stale_after_days = 30.0
+quarantine_min_stale_runs = 3
+max_concurrent_probes_per_site = 32  # capped at 64
+max_concurrent_sites = 4
+
+# At least one site is required. block must be a 10.x.0.0/16; each active
+# subnet must be a /24 inside that block.
+[[sites]]
+site_id = "SITE-001"
+name = "Headquarters"
+block = "10.1.0.0/16"
+active_subnets = ["10.1.10.0/24", "10.1.20.0/24"]
+
+[[sites]]
+site_id = "SITE-002"
+name = "Branch Office"
+block = "10.2.0.0/16"
+active_subnets = ["10.2.10.0/24", "10.2.30.0/24"]
+
+[[vcenters]]
+name = "vc-primary"
+host = "vcenter01.example.invalid"
+username = "svc-sot-readonly@vsphere.local"
+password = "${env:SOT_VCENTER_PASSWORD}"
+verify_tls = true
+
+[[snmp_profiles]]
+name = "extreme-and-apc"
+version = "v2c"
+community = "${env:SOT_SNMP_COMMUNITY}"
+
+[[proxmox]]
+name = "pve-lab"
+host = "10.1.10.50"
+port = 8006
+token_id = "sot-validator@pve!readonly"
+token_secret = "${env:SOT_PROXMOX_TOKEN_SECRET}"
+verify_tls = true
