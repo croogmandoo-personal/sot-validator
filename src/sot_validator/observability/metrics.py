@@ -43,8 +43,8 @@ import tempfile
 import threading
 from typing import Any, Union
 
-METRIC_NAME_PATTERN = re.compile(r"^[a-zA-Z_:][a-zA-Z0-9_:]*$")
-LABEL_NAME_PATTERN = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
+METRIC_NAME_PATTERN = re.compile(r"[a-zA-Z_:][a-zA-Z0-9_:]*")
+LABEL_NAME_PATTERN = re.compile(r"[a-zA-Z_][a-zA-Z0-9_]*")
 DEFAULT_PROBE_BUCKETS: tuple[float, ...] = (0.01, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0)
 
 LabelValues = tuple[str, ...]
@@ -230,7 +230,7 @@ class Histogram(_Metric):
 
 
 def _validate_metric_name(name: Any) -> str:
-    if not isinstance(name, str) or not METRIC_NAME_PATTERN.match(name):
+    if not isinstance(name, str) or not METRIC_NAME_PATTERN.fullmatch(name):
         raise ValueError(f"Invalid metric name: {name!r}")
     return name
 
@@ -240,7 +240,7 @@ def _validate_labelnames(labelnames: Iterable[str], *, histogram: bool) -> tuple
         raise ValueError("labelnames must be a sequence of names, not a string")
     names = tuple(labelnames)
     for label in names:
-        if not isinstance(label, str) or not LABEL_NAME_PATTERN.match(label):
+        if not isinstance(label, str) or not LABEL_NAME_PATTERN.fullmatch(label):
             raise ValueError(f"Invalid label name: {label!r}")
         if label.startswith("__"):
             raise ValueError(f"Label names starting with '__' are reserved: {label!r}")

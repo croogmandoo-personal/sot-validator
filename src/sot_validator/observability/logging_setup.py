@@ -33,6 +33,7 @@ from datetime import datetime, timezone
 import functools
 import json
 import logging
+import math
 import sys
 from typing import IO, Any, Optional, TypeVar, Union
 
@@ -112,7 +113,9 @@ def _utc_timestamp(record: logging.LogRecord) -> str:
 
 
 def _json_safe(value: Any) -> Any:
-    """Coerce mapping keys to strings so ``json.dumps`` never fails on key types."""
+    """Coerce mapping keys and non-finite floats to strings so output is strict JSON."""
+    if isinstance(value, float) and not math.isfinite(value):
+        return str(value)
     if isinstance(value, Mapping):
         return {
             key if isinstance(key, str) else str(key): _json_safe(item)
@@ -124,7 +127,11 @@ def _json_safe(value: Any) -> Any:
 
 
 class JsonFormatter(logging.Formatter):
-    """Format each record as one single-line JSON object."""
+    """Format each record as one single-line JSON object.
+
+    Extras are redacted here as well as in ``RedactionFilter`` so the formatter is
+    safe when used on a handler without the filter.
+    """
 
     def format(self, record: logging.LogRecord) -> str:
         payload: dict[str, Any] = {
@@ -144,7 +151,10 @@ class JsonFormatter(logging.Formatter):
 
 
 class TextFormatter(logging.Formatter):
-    """Format each record as a human-readable line with ``key=value`` extras appended."""
+    """Format each record as a human-readable line with ``key=value`` extras appended.
+
+    Extras are redacted here as well, like ``JsonFormatter``.
+    """
 
     def format(self, record: logging.LogRecord) -> str:
         parts = [
@@ -219,8 +229,8 @@ def get_log_context() -> dict[str, Optional[str]]:
 
 @contextmanager
 def log_context(
-    run_id: Optional[str] = _UNSET,
-    site_id: Optional[str] = _UNSET,
+    run_id: Any = _UNSET,
+    site_id: Any = _UNSET,
 ) -> Iterator[None]:
     """Set ``run_id`` and/or ``site_id`` for the block and restore the outer values on exit.
 

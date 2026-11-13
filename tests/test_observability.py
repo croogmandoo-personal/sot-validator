@@ -328,9 +328,7 @@ def test_text_redaction():
     assert extra == snapshot
 
 
-def test_redaction_covers_other_handlers_on_the_record():
-    stream = io.StringIO()
-    configure_logging("INFO", fmt="json", stream=stream)
+def test_redaction_filter_rewrites_record_fields():
     record = logging.LogRecord("sot_validator.x", logging.INFO, "", 0, "m", (), None)
     record.client_secret = "s3cr3t"
     record.ok = {"nested": [{"db_password": 5}]}
@@ -358,6 +356,30 @@ def test_redact_leaves_non_matching_and_does_not_mutate():
     }
     assert value == snapshot
     assert redact("password=hunter2") == "password=hunter2"
+
+
+def test_redaction_is_visible_to_parent_handlers():
+    configure_logging("INFO", fmt="json", stream=io.StringIO())
+    parent = logging.Handler()
+    seen = []
+    parent.emit = lambda record: seen.append(dict(record.__dict__))
+    root = logging.getLogger()
+    root.addHandler(parent)
+    try:
+        get_logger("x").info("m", extra={"snmp_community": "public"})
+    finally:
+        root.removeHandler(parent)
+    assert seen[0]["snmp_community"] == REDACTION_MASK
+
+
+def test_non_finite_floats_are_strict_json():
+    stream = io.StringIO()
+    configure_logging("INFO", fmt="json", stream=stream)
+    get_logger("x").info("m", extra={"v": float("nan"), "w": [float("inf")]})
+    output = stream.getvalue()
+    record = json.loads(output, parse_constant=lambda token: pytest.fail(token))
+    assert record["v"] == "nan"
+    assert record["w"] == ["inf"]
 
 
 def test_message_text_is_not_scanned():
@@ -433,13 +455,13 @@ def test_label_named_like_parameter_is_allowed():
     assert 'c{amount="x"} 2' in registry.render().splitlines()
 
 
-@pytest.mark.parametrize("name", ["1bad", "bad-name", "", "has space"])
+@pytest.mark.parametrize("name", ["1bad", "bad-name", "", "has space", "bad-name\n", "good_total\n"])
 def test_invalid_metric_names(name):
     with pytest.raises(ValueError):
         MetricsRegistry().counter(name, "help")
 
 
-@pytest.mark.parametrize("label", ["bad-label", "__x", "1x", ""])
+@pytest.mark.parametrize("label", ["bad-label", "__x", "1x", "", "bad-label\n", "lab\n"])
 def test_invalid_label_names(label):
     with pytest.raises(ValueError):
         MetricsRegistry().gauge("g", "help", (label,))
