@@ -1,0 +1,61 @@
+{
+  "note": "EXAMPLE ONLY: every version and date in this file is a fake placeholder, not vendor data. Replace the entries with your own approved baselines and vendor end-of-sale / end-of-support dates. Entries match in file order, so put specific platform globs before broad ones.",
+  "entries": [
+    {
+      "vendor": "extreme",
+      "platform": "X460G2-*",
+      "minimum_version": "0.0.1",
+      "recommended_version": "99.0.0",
+      "end_of_sale": "2000-01-01",
+      "end_of_support": "2099-01-01"
+    },
+    {
+      "vendor": "extreme",
+      "platform": "X4*",
+      "minimum_version": "0.0.1",
+      "recommended_version": "99.0.0",
+      "end_of_sale": "2099-01-01",
+      "end_of_support": "2099-12-31"
+    },
+    {
+      "vendor": "extreme",
+      "platform": "*-SwitchEngine",
+      "minimum_version": "0.0.1",
+      "recommended_version": "99.0.0"
+    },
+    {
+      "vendor": "extreme",
+      "platform": "*-FabricEngine",
+      "minimum_version": "0.0.1",
+      "recommended_version": "99.0.0"
+    },
+    {
+      "vendor": "extreme",
+      "platform": "VSP-*",
+      "minimum_version": "0.0.1",
+      "recommended_version": "99.0.0",
+      "end_of_sale": "2099-01-01",
+      "end_of_support": "2099-12-31"
+    },
+    {
+      "vendor": "extreme",
+      "platform": "5520-*",
+      "minimum_version": "0.0.1",
+      "recommended_version": "99.0.0"
+    },
+    {
+      "vendor": "apc",
+      "platform": "hw05",
+      "minimum_version": "0.0.1",
+      "recommended_version": "99.0.0",
+      "end_of_sale": "2000-01-01",
+      "end_of_support": "2099-01-01"
+    },
+    {
+      "vendor": "apc",
+      "platform": "*",
+      "minimum_version": "0.0.1",
+      "recommended_version": "99.0.0"
+    }
+  ]
+}
