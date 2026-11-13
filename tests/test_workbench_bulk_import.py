@@ -308,6 +308,16 @@ def test_rendered_html_has_bulk_import_tab_controls() -> None:
     assert "file.text()" in html
     assert "upload limit" in html
     assert "Import refused: " in html
+    # Import statuses reuse the shared badge palette and input styling.
+    for status, badge in (
+        ("change", "badge-info"),
+        ("no_op", "badge-insufficient"),
+        ("conflict", "badge-unreachable"),
+        ("invalid", "badge-stale"),
+    ):
+        assert f"{status}: '{badge}'" in html
+    assert ".import-status-" not in html
+    assert re.search(r"form textarea,\s*\.import-row input, \.import-row select \{", html)
     assert "eval(" not in html and "new Function" not in html
     assert "<script src" not in html.lower()
 

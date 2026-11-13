@@ -734,6 +734,16 @@ document.getElementById('switch-faceplate').addEventListener('click', ev => {
 # Bulk Import tab behaviour. Every CSV-derived value is rendered through escapeHtml().
 _BULK_IMPORT_SCRIPT = """
 let IMPORT_LAST = null;
+const IMPORT_STATUS_BADGE = {
+  change: 'badge-info',
+  no_op: 'badge-insufficient',
+  conflict: 'badge-unreachable',
+  invalid: 'badge-stale'
+};
+
+function importStatusBadge(status, text) {
+  return '<span class="badge ' + (IMPORT_STATUS_BADGE[status] || 'badge-insufficient') + '">' + escapeHtml(text) + '</span>';
+}
 
 function importStatusMessage(status, data, fallback) {
   if (status === 413) {
@@ -748,8 +758,10 @@ function importStatusMessage(status, data, fallback) {
   return authFailureMessage(status) || (data && data.error) || fallback;
 }
 
-function setImportMessages(html) {
-  document.getElementById('import-messages').innerHTML = html;
+function setImportMessages(html, neutral) {
+  const el = document.getElementById('import-messages');
+  el.classList.toggle('import-messages-neutral', !!neutral);
+  el.innerHTML = html;
 }
 
 function invalidateImportPreview() {
@@ -778,14 +790,14 @@ function renderImportPreview(preview) {
     '<td>' + escapeHtml(row.field) + '</td>' +
     '<td>' + escapeHtml(formatImportValue(row.old_value)) + '</td>' +
     '<td>' + escapeHtml(formatImportValue(row.new_value)) + '</td>' +
-    '<td><span class="badge import-status-' + escapeHtml(row.status) + '">' + escapeHtml(row.status) + '</span></td>' +
+    '<td>' + importStatusBadge(row.status, row.status) + '</td>' +
     '<td>' + escapeHtml(row.reason) + '</td>' +
     '<td>' + escapeHtml(row.detail) + '</td>' +
     '</tr>'
   )).join('');
   const counts = preview.counts || {};
   document.getElementById('import-summary').innerHTML = ['change', 'no_op', 'conflict', 'invalid'].map(
-    s => '<span class="badge import-status-' + s + '">' + s + ': ' + escapeHtml(counts[s] || 0) + '</span>'
+    s => importStatusBadge(s, s + ': ' + (counts[s] || 0))
   ).join(' ');
   applyImportStatusFilter();
 }
@@ -831,7 +843,7 @@ async function previewImport() {
   const input = document.getElementById('import-file');
   const file = input.files && input.files[0];
   if (!file) {
-    setImportMessages(escapeHtml('Choose a CSV file to preview.'));
+    setImportMessages(escapeHtml('Choose a CSV file to preview.'), true);
     return;
   }
   const csvText = await file.text();
@@ -843,11 +855,12 @@ async function previewImport() {
     IMPORT_LAST = { csv: csvText, as_of: asOf, confirm_token: preview.confirm_token };
     document.getElementById('import-apply-btn').disabled = !preview.can_apply;
     if (!preview.can_apply) {
+      const blocked = preview.counts.conflict || preview.counts.invalid;
       setImportMessages(escapeHtml(
-        (preview.counts.conflict || preview.counts.invalid)
+        blocked
           ? 'Apply is disabled: fix the conflict and invalid rows, then preview again.'
           : 'Nothing to apply: every row matches the current values.'
-      ));
+      ), !blocked);
     }
     return;
   }
@@ -1200,7 +1213,8 @@ header h1 {{ margin: 0; font-size: 1.35rem; }}
   align-items: center;
   margin-bottom: 1rem;
 }}
-.filter-bar input, .filter-bar select, form input, form select, form textarea {{
+.filter-bar input, .filter-bar select, form input, form select, form textarea,
+.import-row input, .import-row select {{
   background: var(--bg);
   color: var(--text);
   border: 1px solid var(--border);
@@ -1454,30 +1468,19 @@ th {{ background: var(--panel-alt); font-weight: 600; }}
   flex-wrap: wrap;
   gap: 0.75rem;
 }}
-.import-row input, .import-row select {{
-  background: var(--bg);
-  color: var(--text);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 0.45rem 0.65rem;
-  font-size: 0.9rem;
-  max-width: 100%;
-}}
+.import-row input, .import-row select {{ max-width: 100%; }}
 .import-actions {{ display: flex; flex-wrap: wrap; gap: 0.5rem; }}
 .btn:disabled {{ opacity: 0.45; cursor: not-allowed; }}
 .import-summary {{ margin-top: 0.75rem; font-size: 0.88rem; }}
 .import-messages {{ margin-top: 0.5rem; font-size: 0.88rem; color: #fca5a5; }}
+.import-messages-neutral {{ color: var(--muted); }}
 .import-messages ul {{ margin: 0.25rem 0 0; padding-left: 1.25rem; }}
 .import-scroll {{
   overflow-x: auto;
   max-width: 100%;
 }}
 #import-preview-table {{ min-width: 760px; }}
-#import-preview-table td {{ word-break: break-word; }}
-.import-status-change {{ background: rgba(56, 189, 248, 0.2); color: #7dd3fc; }}
-.import-status-no_op {{ background: rgba(100, 116, 139, 0.25); color: #cbd5e1; }}
-.import-status-conflict {{ background: rgba(245, 158, 11, 0.2); color: #fcd34d; }}
-.import-status-invalid {{ background: rgba(239, 68, 68, 0.2); color: #fca5a5; }}
+#import-preview-table td {{ overflow-wrap: break-word; }}
 </style>
 </head>
 <body>
