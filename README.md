@@ -224,3 +224,9 @@ Run the repository verification gate:
 ```bash
 bash factory/checks.sh
 ```
+
+Run the 100-site synthetic fleet performance budgets (`tests/perf/`). They are marked `perf` and excluded from the default `python3 -m pytest` run by `addopts` in `pyproject.toml`; a later `-m` overrides that:
+
+```bash
+python3 -m pytest -m perf
+```

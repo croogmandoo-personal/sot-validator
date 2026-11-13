@@ -16,3 +16,5 @@ where = ["src"]
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 testpaths = ["tests"]
+markers = ["perf: full 100-site pipeline performance budgets (run with -m perf)"]
+addopts = "-m \"not perf\""

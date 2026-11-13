@@ -552,3 +552,42 @@ def test_scoring_and_classification_with_ad_and_dns_dhcp_signals() -> None:
     retired_ip_sig_types = {s.signal_type: s.status for s in res_ip_retired.signals}
     assert retired_ip_sig_types[SignalType.AD_COMPUTER_ACCOUNT] is SignalStatus.INACTIVE
     assert retired_ip_sig_types[SignalType.DNS_DHCP_LEASE] is SignalStatus.INACTIVE
+
+
+def test_dns_dhcp_lease_collector_reuses_scoped_leases_only_for_same_guard() -> None:
+    site = Site(
+        site_id="site-cache",
+        name="Cache Site",
+        subnets=[Subnet(subnet_id="net-a", site_id="site-cache", cidr="10.9.1.0/24")],
+    )
+    leases = [
+        DhcpLeaseRecord(ip="10.9.1.20", hostname="host-a", subnet_cidr="10.9.1.0/24"),
+        DhcpLeaseRecord(ip="10.9.2.20", hostname="host-b", subnet_cidr="10.9.2.0/24"),
+    ]
+    collector = DnsDhcpLeaseCollector(
+        dhcp_leases=leases, site=site, evaluation_time=FIXED_EVAL_TIME
+    )
+    # In-scope IP whose only lease match is by hostname on the second /24
+    target = Equipment(
+        equipment_id="eq-b",
+        site_id="site-cache",
+        name="host-b",
+        assigned_ips=["10.9.1.40"],
+    )
+    wide_guard = SubnetScopeGuard(subnets=["10.9.1.0/24", "10.9.2.0/24"])
+
+    default_first = collector.evaluate(target)
+    assert default_first.metadata["dhcp_lease_active"] is False
+    widened = collector.evaluate(target, scope_guard=wide_guard)
+    assert widened.metadata["dhcp_lease_active"] is True
+    default_again = collector.evaluate(target)
+    assert default_again.metadata["dhcp_lease_active"] is False
+
+    explicit = collector.evaluate(
+        IPAddress(ip="10.9.1.30", subnet_id="net-a"),
+        dhcp_leases=[DhcpLeaseRecord(ip="10.9.1.30", subnet_cidr="10.9.1.0/24")],
+    )
+    assert explicit.metadata["dhcp_lease_active"] is True
+    assert collector.evaluate(IPAddress(ip="10.9.1.30", subnet_id="net-a")).metadata[
+        "dhcp_lease_active"
+    ] is False
