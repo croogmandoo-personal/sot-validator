@@ -1,0 +1,17 @@
+usage: sot-validator history-prune [-h] [--db-path DB_PATH] --config CONFIG [--apply] [--now NOW]
+
+Prune validation runs, and the drift rows they produced, that fall outside the [retention] limits
+in the fleet TOML. The default is a dry run that only reports what would be deleted; only --apply
+deletes. The newest run is always kept and item_streaks is never touched. JSON history files are
+not supported; --db-path must be an existing SQLite database.
+
+options:
+  -h, --help         show this help message and exit
+  --db-path DB_PATH  Path to an existing SQLite HistoryStore database (default: ./history.db).
+                     JSON history files are not supported.
+  --config CONFIG    Fleet TOML configuration file whose [retention] table sets max_age_days and
+                     max_runs_per_site.
+  --apply            Delete the selected runs and drift rows. Without it the command is a dry run
+                     that writes nothing.
+  --now NOW          Optional ISO-8601 UTC timestamp to evaluate the age limit against (default:
+                     current time).

@@ -1,10 +1,12 @@
-"""Validation history and quarantine subcommands (`history`, `quarantine`)."""
+"""Validation history and quarantine subcommands (`history`, `history-prune`, `quarantine`)."""
 
 from __future__ import annotations
 
 import argparse
 import json
 from pathlib import Path
+import sqlite3
+import sys
 from typing import Any, Optional
 
 from sot_validator.cli._common import (
@@ -12,8 +14,13 @@ from sot_validator.cli._common import (
     _open_history_store,
     _parse_str_list,
 )
+from sot_validator.config import ConfigError, load_config
 from sot_validator.extraction import SnapshotStore
-from sot_validator.history import HistoryStore
+from sot_validator.history import (
+    HistorySchemaVersionError,
+    HistoryStore,
+    RetentionPolicy,
+)
 from sot_validator.models import Site, ValidationResult
 from sot_validator.remediation import (
     ApprovalStatus,
@@ -109,6 +116,44 @@ def cmd_history(args: argparse.Namespace) -> int:
     return 0
 
 
+def _prune_error(message: str) -> int:
+    print(f"error: {' '.join(message.split())}", file=sys.stderr)
+    return 2
+
+
+def cmd_history_prune(args: argparse.Namespace) -> int:
+    db_path = Path(args.db_path)
+    if db_path.suffix.lower() == ".json":
+        return _prune_error(
+            f"--db-path {db_path}: JSON history files are not supported by history-prune; "
+            "use a SQLite history database"
+        )
+    if not db_path.is_file():
+        return _prune_error(f"--db-path {db_path}: history database does not exist")
+    try:
+        config = load_config(args.config)
+    except ConfigError as exc:
+        return _prune_error(str(exc))
+    policy = RetentionPolicy(
+        max_age_days=config.retention.max_age_days,
+        max_runs_per_site=config.retention.max_runs_per_site,
+    )
+
+    try:
+        store = HistoryStore(db_path)
+    except (HistorySchemaVersionError, sqlite3.DatabaseError) as exc:
+        return _prune_error(f"--db-path {db_path}: {exc}")
+    try:
+        report = store.prune_runs(policy, now=args.now, dry_run=not args.apply)
+    except ValueError as exc:
+        return _prune_error(str(exc))
+    finally:
+        store.close()
+
+    print(json.dumps(report.to_dict(), indent=2))
+    return 0
+
+
 def cmd_quarantine(args: argparse.Namespace) -> int:
     if args.manifest_in is not None:
         in_path = Path(args.manifest_in)
@@ -195,7 +240,7 @@ def cmd_quarantine(args: argparse.Namespace) -> int:
 
 
 def register(subparsers: argparse._SubParsersAction) -> None:
-    """Register the `history`, `quarantine` subcommands."""
+    """Register the `history`, `history-prune`, `quarantine` subcommands."""
     # 5. history
     history_parser = subparsers.add_parser(
         "history",
@@ -266,6 +311,43 @@ def register(subparsers: argparse._SubParsersAction) -> None:
         help="Optional directory to write history_summary.json and drift_report.json.",
     )
     history_parser.set_defaults(func=cmd_history)
+
+    # 5b. history-prune
+    prune_parser = subparsers.add_parser(
+        "history-prune",
+        help="Prune old validation runs and their drift rows from a SQLite HistoryStore using the fleet [retention] policy.",
+        description=(
+            "Prune validation runs, and the drift rows they produced, that fall outside the "
+            "[retention] limits in the fleet TOML. The default is a dry run that only reports "
+            "what would be deleted; only --apply deletes. The newest run is always kept and "
+            "item_streaks is never touched. JSON history files are not supported; --db-path "
+            "must be an existing SQLite database."
+        ),
+    )
+    prune_parser.add_argument(
+        "--db-path",
+        type=Path,
+        default=Path("./history.db"),
+        help="Path to an existing SQLite HistoryStore database (default: ./history.db). JSON history files are not supported.",
+    )
+    prune_parser.add_argument(
+        "--config",
+        type=Path,
+        required=True,
+        help="Fleet TOML configuration file whose [retention] table sets max_age_days and max_runs_per_site.",
+    )
+    prune_parser.add_argument(
+        "--apply",
+        action="store_true",
+        help="Delete the selected runs and drift rows. Without it the command is a dry run that writes nothing.",
+    )
+    prune_parser.add_argument(
+        "--now",
+        type=str,
+        default=None,
+        help="Optional ISO-8601 UTC timestamp to evaluate the age limit against (default: current time).",
+    )
+    prune_parser.set_defaults(func=cmd_history_prune)
 
     # 6. quarantine
     quarantine_parser = subparsers.add_parser(

@@ -1,10 +1,10 @@
 usage: sot-validator [-h]
-                     {extract,validate,report,run,history,quarantine,remediate,reconcile,campaign,preflight,reclaim-ports,export-modern-sot,migrate-export,parity-check,migration-parity,ups-health,itsm,itsm-sync,discover,serve,curate,topology,fingerprint,map-ports,diff-scans} ...
+                     {extract,validate,report,run,history,history-prune,quarantine,remediate,reconcile,campaign,preflight,reclaim-ports,export-modern-sot,migrate-export,parity-check,migration-parity,ups-health,itsm,itsm-sync,discover,serve,curate,topology,fingerprint,map-ports,diff-scans} ...
 
 Read-only batch inventory validation system for legacy Network Source of Truth.
 
 positional arguments:
-  {extract,validate,report,run,history,quarantine,remediate,reconcile,campaign,preflight,reclaim-ports,export-modern-sot,migrate-export,parity-check,migration-parity,ups-health,itsm,itsm-sync,discover,serve,curate,topology,fingerprint,map-ports,diff-scans}
+  {extract,validate,report,run,history,history-prune,quarantine,remediate,reconcile,campaign,preflight,reclaim-ports,export-modern-sot,migrate-export,parity-check,migration-parity,ups-health,itsm,itsm-sync,discover,serve,curate,topology,fingerprint,map-ports,diff-scans}
     extract             Extract read-only site inventory batches into local snapshots.
     validate            Evaluate passive, hypervisor, directory/DNS, and scoped active signals
                         against site snapshots.
@@ -14,6 +14,8 @@ positional arguments:
                         and Phase 2 dry-run plan generation.
     history             Record validation runs in HistoryStore, query stale streaks, and analyze
                         state-transition drift.
+    history-prune       Prune old validation runs and their drift rows from a SQLite HistoryStore
+                        using the fleet [retention] policy.
     quarantine          Evaluate stale streaks against QuarantinePolicy and generate/approve
                         SHA-256 signed manifests.
     remediate           Execute a SHA-256-verified RemediationApprovalManifest or generate/apply
