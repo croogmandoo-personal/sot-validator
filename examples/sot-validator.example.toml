@@ -20,6 +20,15 @@ quarantine_min_stale_runs = 3
 max_concurrent_probes_per_site = 32  # capped at 64
 max_concurrent_sites = 4
 
+# History retention limits, read only by `sot-validator history-prune --config`.
+# Both keys are optional; leaving them out disables pruning. Nothing is pruned
+# automatically: runs older than max_age_days, or beyond the newest
+# max_runs_per_site runs of every site they cover, are deleted only by
+# `history-prune --apply`.
+[retention]
+max_age_days = 365
+max_runs_per_site = 52
+
 # At least one site is required. block must be a 10.x.0.0/16; each active
 # subnet must be a /24 inside that block.
 [[sites]]

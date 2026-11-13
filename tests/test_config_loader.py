@@ -14,6 +14,7 @@ from sot_validator.config import (
     ConfigError,
     PolicyConfig,
     ProxmoxConfig,
+    RetentionConfig,
     SecretValue,
     SiteConfig,
     SnmpProfile,
@@ -162,6 +163,7 @@ def test_shipped_example_loads(monkeypatch):
     assert cfg.vcenters[0].password.reveal() == "vc-secret"
     assert cfg.snmp_profiles[0].community.reveal() == "snmp-secret"
     assert cfg.proxmox[0].token_secret.reveal() == "pve-secret"
+    assert cfg.retention == RetentionConfig(max_age_days=365, max_runs_per_site=52)
 
 
 def test_loaded_config_is_frozen(tmp_path):
@@ -413,6 +415,47 @@ def test_active_equal_to_stale_is_allowed(tmp_path):
 @pytest.mark.parametrize("value", ["0", "-1", "true", "2.5", '"3"'])
 def test_invalid_quarantine_min_stale_runs(tmp_path, value):
     _error(tmp_path, f"[policy]\nquarantine_min_stale_runs = {value}\n" + SITE, "policy", "quarantine_min_stale_runs")
+
+
+# --- retention --------------------------------------------------------------------------
+
+
+def test_missing_retention_table_disables_both_limits(tmp_path):
+    cfg = load_config(_write(tmp_path, SITE))
+    assert cfg.retention == RetentionConfig()
+    assert cfg.retention.max_age_days is None
+    assert cfg.retention.max_runs_per_site is None
+    assert cfg.to_dict()["retention"] == {"max_age_days": None, "max_runs_per_site": None}
+
+
+def test_valid_retention_table(tmp_path):
+    text = "[retention]\nmax_age_days = 90\nmax_runs_per_site = 12\n" + SITE
+    cfg = load_config(_write(tmp_path, text))
+    assert cfg.retention == RetentionConfig(max_age_days=90, max_runs_per_site=12)
+    assert cfg.to_dict()["retention"] == {"max_age_days": 90, "max_runs_per_site": 12}
+
+
+def test_retention_keys_are_independent(tmp_path):
+    cfg = load_config(_write(tmp_path, SITE + "[retention]\nmax_runs_per_site = 3\n"))
+    assert cfg.retention == RetentionConfig(max_age_days=None, max_runs_per_site=3)
+    cfg = load_config(_write(tmp_path, "[retention]\n" + SITE))
+    assert cfg.retention == RetentionConfig()
+
+
+def test_unknown_key_in_retention(tmp_path):
+    message = _error(tmp_path, "[retention]\nkeep = 1\n" + SITE, "retention", "keep")
+    assert "[retention] keep: unknown key" in message
+
+
+@pytest.mark.parametrize("key", ["max_age_days", "max_runs_per_site"])
+@pytest.mark.parametrize("value", ["true", "false", "2.5", "1.0", "0", "-1", '"30"'])
+def test_invalid_retention_values(tmp_path, key, value):
+    _error(tmp_path, f"[retention]\n{key} = {value}\n" + SITE, "retention", key)
+
+
+def test_wrong_type_retention_table(tmp_path):
+    message = _error(tmp_path, "retention = 30\n" + SITE, "root", "retention")
+    assert "expected a table ([retention])" in message
 
 
 # --- concurrency ------------------------------------------------------------------------
