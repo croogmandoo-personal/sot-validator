@@ -1,0 +1,64 @@
+usage: sot-validator ups-health [-h] [--snapshot-dir SNAPSHOT_DIR] [--output-dir OUTPUT_DIR]
+                                [--output OUTPUT_FILE] [--snmp-fixture SNMP_FIXTURE]
+                                [--min-runtime-minutes MIN_RUNTIME_MINUTES]
+                                [--critical-runtime-minutes CRITICAL_RUNTIME_MINUTES]
+                                [--max-temp-celsius MAX_TEMP_CELSIUS]
+                                [--critical-temp-celsius CRITICAL_TEMP_CELSIUS]
+                                [--max-load-pct MAX_LOAD_PCT]
+                                [--critical-load-pct CRITICAL_LOAD_PCT]
+                                [--evaluation-time EVALUATION_TIME]
+                                [--site-ids SITE_IDS [SITE_IDS ...]] [--all-sites]
+                                [--batch-size BATCH_SIZE] [--rate-limit RATE_LIMIT] [--no-resume]
+                                [--fixtures] [--num-sites NUM_SITES] [--fixture-path FIXTURE_PATH]
+                                [--sql-dump SQL_DUMP] [--sqlite-path SQLITE_PATH]
+                                [--csv-dir CSV_DIR] [--json-export JSON_EXPORT]
+                                [--scrape-url SCRAPE_URL]
+
+options:
+  -h, --help            show this help message and exit
+  --snapshot-dir SNAPSHOT_DIR
+                        Directory containing extracted site snapshots.
+  --output-dir OUTPUT_DIR
+                        Directory to write ups_health_report.json (default: ./reports).
+  --output, --output-file OUTPUT_FILE
+                        Optional explicit output path for ups_health_report.json.
+  --snmp-fixture SNMP_FIXTURE
+                        Path to SNMP PowerNet-MIB discovery fixture JSON file.
+  --min-runtime-minutes MIN_RUNTIME_MINUTES
+                        Minimum battery runtime remaining in minutes before warning (default:
+                        15.0).
+  --critical-runtime-minutes CRITICAL_RUNTIME_MINUTES
+                        Critical battery runtime remaining in minutes (default: 5.0).
+  --max-temp-celsius MAX_TEMP_CELSIUS
+                        Maximum battery temperature in Celsius before thermal warning (default:
+                        40.0).
+  --critical-temp-celsius CRITICAL_TEMP_CELSIUS
+                        Critical battery temperature in Celsius (default: 50.0).
+  --max-load-pct MAX_LOAD_PCT
+                        Maximum output load percentage before overload warning (default: 80.0).
+  --critical-load-pct CRITICAL_LOAD_PCT
+                        Critical output load percentage (default: 95.0).
+  --evaluation-time EVALUATION_TIME
+                        Optional reference ISO-8601 UTC timestamp.
+  --site-ids SITE_IDS [SITE_IDS ...]
+                        Target site IDs (comma-separated or space-separated, e.g.
+                        site-001,site-002).
+  --all-sites           Process all available sites.
+  --batch-size BATCH_SIZE
+                        Number of sites per extraction batch (default: 10).
+  --rate-limit RATE_LIMIT
+                        Polite delay in seconds between per-site requests (default: 0.0).
+  --no-resume           Disable checkpoint resume and re-extract all target sites.
+  --fixtures            Use deterministic built-in FixtureSoTClient inventory.
+  --num-sites NUM_SITES
+                        Number of fixture sites to generate when --fixtures is set (default: 3).
+  --fixture-path FIXTURE_PATH
+                        Path to a JSON fixture file for FixtureSoTClient.
+  --sql-dump SQL_DUMP   Path to a read-only SQL dump file (.sql).
+  --sqlite-path SQLITE_PATH
+                        Path to a read-only SQLite database export.
+  --csv-dir CSV_DIR     Path to a directory containing SoT CSV export tables.
+  --json-export JSON_EXPORT
+                        Path to a JSON export file of SoT tables or sites.
+  --scrape-url SCRAPE_URL
+                        Base URL for read-only GET HTML scraping of the legacy SoT.

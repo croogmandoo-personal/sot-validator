@@ -12,7 +12,7 @@ from urllib.request import Request, urlopen
 
 import pytest
 
-from sot_validator import cli
+from sot_validator.cli import workbench as cli_workbench
 from sot_validator.cli import _workbench_url, main
 
 URL_RE = re.compile(r"(http://127\.0\.0\.1:(\d+)/)#token=(\S+)")
@@ -119,14 +119,14 @@ def test_printed_token_url_authenticates_writes(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     servers: list[Any] = []
-    real_create = cli.create_workbench_server
+    real_create = cli_workbench.create_workbench_server
 
     def _capture(*args: Any, **kwargs: Any) -> Any:
         server = real_create(*args, **kwargs)
         servers.append(server)
         return server
 
-    monkeypatch.setattr(cli, "create_workbench_server", _capture)
+    monkeypatch.setattr(cli_workbench, "create_workbench_server", _capture)
     result: list[int] = []
     thread = threading.Thread(
         target=lambda: result.append(main(["serve", "--host", "127.0.0.1", "--port", "0"])),

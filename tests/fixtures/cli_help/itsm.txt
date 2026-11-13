@@ -1,0 +1,68 @@
+usage: sot-validator itsm [-h] [--output-dir OUTPUT_DIR] [--output OUTPUT]
+                          [--tickets-file SINK_FILE] [--manifest MANIFEST_FILE]
+                          [--port-plan PORT_PLAN_FILE] [--reconciliation-file RECONCILIATION_FILE]
+                          [--ups-report UPS_HEALTH_FILE] [--artifact ARTIFACT_FILE]
+                          [--workflow-type {QUARANTINE_DECOMMISSION,PORT_RECLAMATION,SHADOW_IT_ONBOARDING,UPS_HARDWARE_INCIDENT}]
+                          [--ticket-id TICKET_ID] [--site-id SITE_ID] [--cmdb-ci CMDB_CI]
+                          [--provider {servicenow,jira,webhook}] [--project-key PROJECT_KEY]
+                          [--approval-status {PENDING,APPROVED,SCHEDULED,REJECTED,CANCELLED}]
+                          [--approve-ticket APPROVE_TICKET_ID] [--reject-ticket REJECT_TICKET_ID]
+                          [--approved-by APPROVED_BY] [--approved-at APPROVED_AT]
+                          [--verify-ticket VERIFY_TICKET_ID] [--allow-scheduled]
+                          [--expected-sha256 EXPECTED_SHA256] [--payload-out PAYLOAD_OUT]
+                          [--evaluation-time EVALUATION_TIME]
+
+options:
+  -h, --help            show this help message and exit
+  --output-dir OUTPUT_DIR
+                        Directory to write ITSM ticket sink and provider payload files (default:
+                        ./reports).
+  --output OUTPUT       Optional explicit file path for the generated or updated ticket JSON.
+  --tickets-file, --sink-file SINK_FILE
+                        Path to JsonFileItsmSink file (defaults to <output-
+                        dir>/itsm_tickets.json).
+  --manifest, --manifest-file MANIFEST_FILE
+                        Optional Phase 2 RemediationApprovalManifest JSON file to generate a
+                        quarantine change ticket.
+  --port-plan, --port-plan-file PORT_PLAN_FILE
+                        Optional Phase 4 PortReclamationPlan JSON file to generate a port
+                        reclamation change ticket.
+  --reconciliation-file RECONCILIATION_FILE
+                        Optional Phase 3 ReconciliationReport JSON file to generate a Shadow IT
+                        onboarding task.
+  --ups-report, --ups-health-file UPS_HEALTH_FILE
+                        Optional Phase 6 UpsFleetHealthReport JSON file to generate an APC UPS
+                        hardware incident ticket.
+  --artifact ARTIFACT_FILE
+                        Optional generic artifact JSON file for ticket generation or verification.
+  --workflow-type {QUARANTINE_DECOMMISSION,PORT_RECLAMATION,SHADOW_IT_ONBOARDING,UPS_HARDWARE_INCIDENT}
+                        Optional explicit workflow type when using --artifact.
+  --ticket-id TICKET_ID
+                        Optional explicit ticket ID when generating a ticket.
+  --site-id SITE_ID     Optional site ID override for ticket metadata.
+  --cmdb-ci CMDB_CI     Optional CMDB Configuration Item override.
+  --provider {servicenow,jira,webhook}
+                        Target ITSM provider payload format (default: servicenow).
+  --project-key PROJECT_KEY
+                        Jira project key when formatting Jira payloads (default: NETOPS).
+  --approval-status {PENDING,APPROVED,SCHEDULED,REJECTED,CANCELLED}
+                        Initial approval status for newly generated tickets (default: PENDING).
+  --approve-ticket, --approve-ticket-id APPROVE_TICKET_ID
+                        Ticket ID in sink to transition to APPROVED.
+  --reject-ticket, --reject-ticket-id REJECT_TICKET_ID
+                        Ticket ID in sink to transition to REJECTED.
+  --approved-by APPROVED_BY
+                        Approver identifier recorded when approving/rejecting tickets (default:
+                        cab-approver).
+  --approved-at APPROVED_AT
+                        Optional ISO-8601 UTC timestamp for approval/rejection.
+  --verify-ticket, --verify-ticket-id VERIFY_TICKET_ID
+                        Ticket ID to verify via ItsmGateVerifier (exits non-zero if unapproved or
+                        SHA-256 mismatches).
+  --allow-scheduled     Allow SCHEDULED status when verifying a ticket via --verify-ticket.
+  --expected-sha256 EXPECTED_SHA256
+                        Optional explicit expected SHA-256 digest when verifying a ticket.
+  --payload-out PAYLOAD_OUT
+                        Optional explicit file path for formatted provider payload JSON.
+  --evaluation-time EVALUATION_TIME
+                        Optional ISO-8601 UTC timestamp.

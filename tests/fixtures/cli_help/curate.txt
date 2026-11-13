@@ -1,0 +1,86 @@
+usage: sot-validator curate [-h] [--curation-db CURATION_DB] [--snapshot SNAPSHOT]
+                            [--output OUTPUT] [--export-json EXPORT_JSON]
+                            [--import-json IMPORT_JSON] [--site-id SITE_ID] [--actor ACTOR]
+                            [--reason REASON] [--target-type TARGET_TYPE] [--target-id TARGET_ID]
+                            [--name NAME] [--hostname HOSTNAME] [--category CATEGORY]
+                            [--role ROLE] [--vendor VENDOR] [--model MODEL] [--vlan-id VLAN_ID]
+                            [--subnet-id SUBNET_ID] [--room ROOM] [--notes NOTES]
+                            [--pin-classification PIN_CLASSIFICATION] [--delete]
+                            [--add-device [ADD_DEVICE]] [--template-id TEMPLATE_ID]
+                            [--device-id DEVICE_ID] [--management-ip MANAGEMENT_IP]
+                            [--port-count PORT_COUNT] [--add-port ADD_PORT]
+                            [--port-range PORT_RANGE] [--poe-status POE_STATUS]
+                            [--admin-status ADMIN_STATUS] [--oper-status OPER_STATUS]
+                            [--connected-device-id CONNECTED_DEVICE_ID]
+                            [--connected-mac CONNECTED_MAC] [--add-vlan ADD_VLAN] [--cidr CIDR]
+                            [--gateway GATEWAY] [--list-audit] [--limit LIMIT]
+
+options:
+  -h, --help            show this help message and exit
+  --curation-db, --db-path CURATION_DB
+                        Path to SQLite CurationStore database or JSON state file (default:
+                        ./curation.db).
+  --snapshot, --snapshot-file SNAPSHOT
+                        Optional Site JSON snapshot file to apply curation overlay against.
+  --output, --output-snapshot OUTPUT
+                        Optional output path for the curated Site JSON snapshot (or audit log
+                        JSON).
+  --export-json EXPORT_JSON
+                        Optional path to export the full CurationStore state as JSON.
+  --import-json IMPORT_JSON
+                        Optional path to import CurationStore state from JSON before applying
+                        operations.
+  --site-id SITE_ID     Optional site ID context for patches, custom devices, and audit log
+                        filtering.
+  --actor ACTOR         Operator identifier recorded in the audit log (default: cli-operator).
+  --reason REASON       Audit reason for the curation change.
+  --target-type TARGET_TYPE
+                        Target entity type to patch or delete (NetworkDevice, Port, VLAN, Subnet,
+                        IPAddress, Equipment).
+  --target-id TARGET_ID
+                        Target entity identifier to patch or delete.
+  --name NAME           Updated name for patched item, custom device, or VLAN.
+  --hostname HOSTNAME   Updated hostname for patched item or custom device.
+  --category CATEGORY   Updated EquipmentCategory (server, vm, ups, san, other).
+  --role ROLE           Updated device or host role (e.g. router, switch, l3_switch, hypervisor,
+                        ups, nas).
+  --vendor VENDOR       Updated hardware/software vendor name.
+  --model MODEL         Updated hardware/software model name.
+  --vlan-id VLAN_ID     VLAN ID to assign to patched item, custom device, or port(s).
+  --subnet-id SUBNET_ID
+                        Subnet ID to assign to patched item or custom VLAN.
+  --room ROOM           Room/rack location to assign to patched item.
+  --notes NOTES         Operator notes to attach to patched item.
+  --pin-classification, --pinned-classification PIN_CLASSIFICATION
+                        Pin ValidationClassification on the target item (e.g. 'Confirmed Active').
+  --delete              Mark the specified (--target-type, --target-id) item as deleted.
+  --add-device [ADD_DEVICE]
+                        Add a custom NetworkDevice (optionally passing hostname or device_id).
+  --template-id, --template TEMPLATE_ID
+                        DeviceTypeCatalog template ID (e.g. extreme-exos-48p, unifi-multi-vlan-
+                        router).
+  --device-id DEVICE_ID
+                        Device ID for --add-device or port curation (--add-port / --port-range).
+  --management-ip MANAGEMENT_IP
+                        Management IPv4 address for --add-device.
+  --port-count PORT_COUNT
+                        Override port count when instantiating a device.
+  --add-port ADD_PORT   Add or update a single port by name on --device-id (e.g. '1:1' or 'eth1').
+  --port-range PORT_RANGE
+                        Add or update a range of ports on --device-id (e.g. '1:1-1:24' or
+                        'eth1..eth8').
+  --poe-status POE_STATUS
+                        PoE status for added/updated port(s) (e.g. delivering, auto, off).
+  --admin-status ADMIN_STATUS
+                        Administrative status for added/updated port(s) (default: up).
+  --oper-status OPER_STATUS
+                        Operational status for added/updated port(s).
+  --connected-device-id CONNECTED_DEVICE_ID
+                        Connected downstream device or equipment ID for added/updated port(s).
+  --connected-mac CONNECTED_MAC
+                        Connected MAC address for added/updated port(s).
+  --add-vlan ADD_VLAN   Add or update a custom VLAN with the specified VLAN ID.
+  --cidr CIDR           Subnet CIDR when adding a custom VLAN with --add-vlan.
+  --gateway GATEWAY     Gateway IP when adding a custom VLAN with --add-vlan.
+  --list-audit          Print the CurationStore audit log as JSON to stdout.
+  --limit LIMIT         Maximum audit log entries to return with --list-audit (default: 100).

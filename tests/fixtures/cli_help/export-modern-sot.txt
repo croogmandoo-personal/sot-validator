@@ -1,0 +1,65 @@
+usage: sot-validator export-modern-sot [-h] [--snapshot-dir SNAPSHOT_DIR]
+                                       [--output-dir OUTPUT_DIR]
+                                       [--target-platform {netbox,nautobot}]
+                                       [--results-file RESULTS_FILE]
+                                       [--reconciliation-file RECONCILIATION_FILE]
+                                       [--include-stale]
+                                       [--merge-untracked | --no-merge-untracked]
+                                       [--approved-discrepancy-ids [APPROVED_DISCREPANCY_IDS ...]]
+                                       [--json-out JSON_OUT] [--csv-dir-out CSV_BUNDLE_DIR]
+                                       [--evaluation-time GENERATED_AT]
+                                       [--site-ids SITE_IDS [SITE_IDS ...]] [--all-sites]
+                                       [--batch-size BATCH_SIZE] [--rate-limit RATE_LIMIT]
+                                       [--no-resume] [--fixtures] [--num-sites NUM_SITES]
+                                       [--fixture-path FIXTURE_PATH] [--sql-dump SQL_DUMP]
+                                       [--sqlite-path SQLITE_PATH] [--csv-dir CSV_DIR]
+                                       [--json-export JSON_EXPORT] [--scrape-url SCRAPE_URL]
+
+options:
+  -h, --help            show this help message and exit
+  --snapshot-dir SNAPSHOT_DIR
+                        Directory containing extracted site snapshots.
+  --output-dir OUTPUT_DIR
+                        Directory to write NetBox/Nautobot JSON and CSV bundles (default:
+                        ./reports).
+  --target-platform {netbox,nautobot}
+                        Target modern SoT platform schema (default: netbox).
+  --results-file RESULTS_FILE
+                        Path to validation_results.json used to filter out stale records.
+  --reconciliation-file RECONCILIATION_FILE
+                        Optional Phase 3 reconciliation_report.json to merge approved untracked
+                        assets.
+  --include-stale       Include stale items tagged as decommissioning/deprecated instead of
+                        excluding them.
+  --merge-untracked, --no-merge-untracked
+                        Merge untracked Shadow IT assets from reconciliation report (default:
+                        True).
+  --approved-discrepancy-ids [APPROVED_DISCREPANCY_IDS ...]
+                        Optional list of approved discrepancy IDs to merge.
+  --json-out JSON_OUT   Optional explicit output path for the JSON export bundle.
+  --csv-dir-out, --csv-bundle-dir CSV_BUNDLE_DIR
+                        Optional explicit directory for the per-entity CSV import bundle.
+  --evaluation-time, --generated-at GENERATED_AT
+                        Optional ISO-8601 timestamp for export bundle metadata.
+  --site-ids SITE_IDS [SITE_IDS ...]
+                        Target site IDs (comma-separated or space-separated, e.g.
+                        site-001,site-002).
+  --all-sites           Process all available sites.
+  --batch-size BATCH_SIZE
+                        Number of sites per extraction batch (default: 10).
+  --rate-limit RATE_LIMIT
+                        Polite delay in seconds between per-site requests (default: 0.0).
+  --no-resume           Disable checkpoint resume and re-extract all target sites.
+  --fixtures            Use deterministic built-in FixtureSoTClient inventory.
+  --num-sites NUM_SITES
+                        Number of fixture sites to generate when --fixtures is set (default: 3).
+  --fixture-path FIXTURE_PATH
+                        Path to a JSON fixture file for FixtureSoTClient.
+  --sql-dump SQL_DUMP   Path to a read-only SQL dump file (.sql).
+  --sqlite-path SQLITE_PATH
+                        Path to a read-only SQLite database export.
+  --csv-dir CSV_DIR     Path to a directory containing SoT CSV export tables.
+  --json-export JSON_EXPORT
+                        Path to a JSON export file of SoT tables or sites.
+  --scrape-url SCRAPE_URL
+                        Base URL for read-only GET HTML scraping of the legacy SoT.

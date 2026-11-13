@@ -1,0 +1,64 @@
+usage: sot-validator quarantine [-h] [--results-file RESULTS_FILE] [--db-path DB_PATH]
+                                [--snapshot-dir SNAPSHOT_DIR] [--manifest-in MANIFEST_IN]
+                                [--output OUTPUT] [--csv-out CSV_OUT]
+                                [--min-consecutive-stale-runs MIN_CONSECUTIVE_STALE_RUNS]
+                                [--min-stale-days MIN_STALE_DAYS]
+                                [--min-confidence MIN_CONFIDENCE]
+                                [--protected-item-ids [PROTECTED_ITEM_IDS ...]]
+                                [--protected-categories [PROTECTED_CATEGORIES ...]]
+                                [--protected-subnets [PROTECTED_SUBNETS ...]]
+                                [--protected-vendors [PROTECTED_VENDORS ...]]
+                                [--allow-protected-override] [--include-below-threshold]
+                                [--approve-all] [--approve-items [APPROVE_ITEMS ...]]
+                                [--reject-items [REJECT_ITEMS ...]] [--reviewer REVIEWER]
+                                [--review-note REVIEW_NOTE] [--manifest-id MANIFEST_ID]
+                                [--evaluation-time GENERATED_AT]
+
+options:
+  -h, --help            show this help message and exit
+  --results-file RESULTS_FILE
+                        Path to validation_results.json.
+  --db-path, --history-db DB_PATH
+                        Path to HistoryStore SQLite DB or exported JSON file.
+  --snapshot-dir SNAPSHOT_DIR
+                        Optional directory containing site snapshots for protection checks.
+  --manifest-in MANIFEST_IN
+                        Optional existing manifest JSON/CSV file to load and modify/approve.
+  --output, --manifest-out OUTPUT
+                        Output path for the RemediationApprovalManifest JSON (default:
+                        ./output/approval_manifest.json).
+  --csv-out CSV_OUT     Optional path to also export the manifest as CSV.
+  --min-consecutive-stale-runs MIN_CONSECUTIVE_STALE_RUNS
+                        Minimum consecutive stale runs required for quarantine graduation
+                        (default: 3).
+  --min-stale-days MIN_STALE_DAYS
+                        Minimum stale duration in days required for quarantine graduation
+                        (default: 30.0).
+  --min-confidence MIN_CONFIDENCE
+                        Minimum classification confidence required for quarantine graduation
+                        (default: 0.85).
+  --protected-item-ids [PROTECTED_ITEM_IDS ...]
+                        Protected item IDs exempt from remediation.
+  --protected-categories [PROTECTED_CATEGORIES ...]
+                        Protected equipment/device categories exempt from remediation.
+  --protected-subnets [PROTECTED_SUBNETS ...]
+                        Protected subnet CIDRs exempt from remediation.
+  --protected-vendors [PROTECTED_VENDORS ...]
+                        Protected vendor names exempt from remediation.
+  --allow-protected-override
+                        Allow overriding protected item exemptions.
+  --include-below-threshold
+                        Include BELOW_THRESHOLD stale items in the generated manifest.
+  --approve-all         Approve all eligible entries in the manifest.
+  --approve-items [APPROVE_ITEMS ...]
+                        Specific item IDs to set to APPROVED.
+  --reject-items [REJECT_ITEMS ...]
+                        Specific item IDs to set to REJECTED.
+  --reviewer REVIEWER   Reviewer identifier recorded on approval decisions (default: cli-
+                        operator).
+  --review-note REVIEW_NOTE
+                        Optional review note recorded on approval decisions.
+  --manifest-id MANIFEST_ID
+                        Optional explicit manifest ID.
+  --evaluation-time, --generated-at GENERATED_AT
+                        Optional ISO-8601 timestamp for manifest generation.

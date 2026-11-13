@@ -1,0 +1,18 @@
+usage: sot-validator diff-scans [-h] --baseline BASELINE --current CURRENT
+                                [--curation-db CURATION_DB] [--output-json OUTPUT_JSON]
+                                [--output-md OUTPUT_MD] [--alert-file ALERT_FILE]
+
+options:
+  -h, --help            show this help message and exit
+  --baseline BASELINE   Baseline Site JSON snapshot file or SnapshotStore directory.
+  --current CURRENT     Current Site JSON snapshot file or SnapshotStore directory.
+  --curation-db, --db-path CURATION_DB
+                        Optional CurationStore SQLite DB or JSON state file used to suppress
+                        curated drift.
+  --output-json OUTPUT_JSON
+                        Output path for the drift report JSON.
+  --output-md OUTPUT_MD
+                        Output path for the drift report Markdown.
+  --alert-file ALERT_FILE
+                        JSON list of alert targets or {"targets": [...]} ({"kind", "destination",
+                        "token"?, "name"?}).
