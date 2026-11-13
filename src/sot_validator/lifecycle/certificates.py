@@ -169,6 +169,10 @@ class CertificateFinding:
                 f"severity must be one of {VALID_SEVERITIES}, got {self.severity!r}"
             )
         self.issues = list(self.issues)
+        if self.not_after is not None and not isinstance(self.not_after, datetime):
+            raise ValueError(
+                f"not_after must be a datetime or None, got {type(self.not_after).__name__}"
+            )
         self.not_after = _to_utc(self.not_after)
 
     def to_dict(self) -> dict[str, Any]:
@@ -260,7 +264,9 @@ def sort_findings(findings: Iterable[CertificateFinding]) -> list[CertificateFin
             f.port,
             f.severity,
             tuple(f.issues),
+            f.subject_cn is not None,
             f.subject_cn or "",
+            f.issuer is not None,
             f.issuer or "",
             f.not_after.isoformat() if f.not_after else "",
         ),

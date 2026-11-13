@@ -189,6 +189,14 @@ def test_self_signed_cn_parsing_by_dn_style():
     ]
 
 
+def test_escaped_dn_separators_are_not_unescaped():
+    # Known limit: RFC 4514 escapes ("\\," and "\\+") are not decoded, so the CN
+    # ends at the escaped separator and the self-signed check does not match.
+    for issuer, cn in (("CN=Foo\\, Inc", "Foo, Inc"), ("CN=a\\+b", "a+b")):
+        record = _record(issuer=issuer, subject_cn=cn, not_after=FAR_FUTURE)
+        assert _evaluate(record) == []
+
+
 @pytest.mark.parametrize(
     "issuer", ["CN=Corp Issuing CA, O=X", "O=sw01.corp.local", "XCN=sw01.corp.local"]
 )
@@ -451,6 +459,12 @@ def test_finding_severity_validated():
         _finding(severity="critical")
 
 
+@pytest.mark.parametrize("value", ["2026-01-01", 1767225600, "not-a-date"])
+def test_finding_not_after_must_be_a_datetime(value):
+    with pytest.raises(ValueError, match="not_after"):
+        _finding(not_after=value)
+
+
 def test_finding_to_dict():
     data = _finding().to_dict()
     assert data == {
@@ -538,6 +552,23 @@ def test_same_endpoint_findings_have_a_total_order():
         forward = report(findings, generated_at=GENERATED_AT)
         assert report(list(reversed(findings)), generated_at=GENERATED_AT) == forward
         assert report([findings[1], findings[2], findings[0]], generated_at=GENERATED_AT) == forward
+
+
+def test_none_and_empty_cn_or_issuer_sort_deterministically():
+    expiring = {"not_after": NOW + timedelta(days=10)}
+    none_values = _record(subject_cn=None, issuer=None, **expiring)
+    empty_values = _record(subject_cn="", issuer="", **expiring)
+    findings = _evaluate(none_values, empty_values)
+    assert _evaluate(empty_values, none_values) == findings
+    assert [f.subject_cn for f in findings] == [None, ""]
+    for report in (generate_certificate_json_report, generate_certificate_markdown_report):
+        forward = report(findings, generated_at=GENERATED_AT)
+        assert report(list(reversed(findings)), generated_at=GENERATED_AT) == forward
+    empty_cn_only = _record(subject_cn="", issuer=None, **expiring)
+    empty_issuer_only = _record(subject_cn=None, issuer="", **expiring)
+    mixed = _evaluate(empty_cn_only, empty_issuer_only)
+    assert _evaluate(empty_issuer_only, empty_cn_only) == mixed
+    assert [(f.subject_cn, f.issuer) for f in mixed] == [(None, ""), ("", None)]
 
 
 # --- JSON report --------------------------------------------------------------
