@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
+from datetime import datetime
 import hmac
+import io
 import ipaddress
 import json
 import secrets
@@ -15,6 +17,15 @@ from typing import Any, Optional
 from urllib.parse import parse_qs, urlparse
 
 from sot_validator.classifier.engine import ClassificationEngine
+from sot_validator.curation.bulk import (
+    BulkApplyRefused,
+    BulkApplyResult,
+    PatchCsvError,
+    PatchPreview,
+    apply_patches,
+    parse_patch_csv,
+    preview_patches,
+)
 from sot_validator.curation.store import (
     AuditLogEntry,
     CurationStore,
@@ -127,6 +138,16 @@ def _optional_str(value: Any) -> Optional[str]:
         return str(value).strip() or None
     stripped = value.strip()
     return stripped if stripped else None
+
+
+def _bulk_csv_fields(body: Mapping[str, Any]) -> tuple[str, Optional[str]]:
+    csv_text = body.get("csv")
+    if not isinstance(csv_text, str):
+        raise ValueError("csv must be a string")
+    as_of = body.get("as_of")
+    if as_of is not None and not isinstance(as_of, str):
+        raise ValueError("as_of must be an ISO-8601 string")
+    return csv_text, _optional_str(as_of)
 
 
 class WorkbenchNotFoundError(KeyError):
@@ -531,6 +552,29 @@ class WorkbenchState:
 
             self.refresh()
             return entry
+
+    def preview_csv(
+        self, csv_text: str, as_of: Optional[datetime | str] = None
+    ) -> PatchPreview:
+        """Parse a bulk patch CSV and preview it against the base site without writing."""
+        with self._lock:
+            patches = parse_patch_csv(io.StringIO(csv_text))
+            return preview_patches(self.store, self.base_site, patches, as_of)
+
+    def apply_csv(
+        self,
+        csv_text: str,
+        as_of: Optional[datetime | str],
+        confirm_token: str,
+        actor: str,
+    ) -> BulkApplyResult:
+        """Rebuild the preview of a bulk patch CSV, apply it if the token matches, then refresh."""
+        with self._lock:
+            patches = parse_patch_csv(io.StringIO(csv_text))
+            preview = preview_patches(self.store, self.base_site, patches, as_of)
+            result = apply_patches(self.store, preview, actor, confirm_token)
+            self.refresh()
+            return result
 
     def create_device(
         self,
@@ -1177,6 +1221,8 @@ class WorkbenchRequestHandler(BaseHTTPRequestHandler):
             "/api/devices",
             "/api/devices/ports",
             "/api/vlans",
+            "/api/curation/preview",
+            "/api/curation/apply",
         ):
             self._send_json(404, {"status": "error", "error": "Not found"})
             return
@@ -1245,6 +1291,45 @@ class WorkbenchRequestHandler(BaseHTTPRequestHandler):
                     },
                 )
                 return
+
+            if route == "/api/curation/preview":
+                csv_text, as_of = _bulk_csv_fields(body)
+                preview = self.server.state.preview_csv(csv_text, as_of)
+                self._send_json(200, {"status": "ok", "preview": preview.to_dict()})
+                return
+
+            if route == "/api/curation/apply":
+                csv_text, as_of = _bulk_csv_fields(body)
+                confirm_token = body.get("confirm_token")
+                if not isinstance(confirm_token, str):
+                    raise ValueError("confirm_token must be a string")
+                result = self.server.state.apply_csv(
+                    csv_text, as_of, confirm_token, actor
+                )
+                self._send_json(
+                    200,
+                    {
+                        "status": "ok",
+                        "batch_id": result.batch_id,
+                        "applied": len(result.entries),
+                        "audit_entries": [e.to_dict() for e in result.entries],
+                        "state": self.server.state.get_state_payload(),
+                    },
+                )
+                return
+        except PatchCsvError as exc:
+            self._send_json(
+                400,
+                {
+                    "status": "error",
+                    "error": str(exc),
+                    "errors": [
+                        {"row": row, "message": message} for row, message in exc.errors
+                    ],
+                },
+            )
+        except BulkApplyRefused as exc:
+            self._send_json(409, {"status": "error", "error": str(exc)})
         except WorkbenchNotFoundError as exc:
             self._send_json(404, {"status": "error", "error": str(exc)})
         except (ValueError, KeyError, TypeError) as exc:
