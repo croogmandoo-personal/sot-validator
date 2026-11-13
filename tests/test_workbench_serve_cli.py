@@ -18,6 +18,12 @@ from sot_validator.cli import _workbench_url, main
 URL_RE = re.compile(r"(http://127\.0\.0\.1:(\d+)/)#token=(\S+)")
 
 
+@pytest.fixture(autouse=True)
+def _run_in_tmp_path(tmp_path: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    # `serve` without --snapshot writes default fixture snapshots to ./output.
+    monkeypatch.chdir(tmp_path)
+
+
 def test_serve_prints_token_url_once_and_supplied_token_verbatim(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
