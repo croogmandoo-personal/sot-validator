@@ -18,6 +18,19 @@ from sot_validator.reporting.generators import (
     generate_json_report,
     generate_markdown_summary,
 )
+from sot_validator.reporting.fleet import (
+    FLEET_DIMENSIONS,
+    TREND_DEGRADING,
+    TREND_IMPROVING,
+    TREND_NEW,
+    TREND_STABLE,
+    TREND_STABLE_THRESHOLD,
+    FleetScorer,
+    FleetScoreWeights,
+    SiteScorecard,
+    render_fleet_html,
+    render_fleet_markdown,
+)
 
 __all__ = [
     "ALL_CLASSIFICATIONS",
@@ -26,12 +39,23 @@ __all__ = [
     "CsvReportGenerator",
     "DEFAULT_DASHBOARD_FILENAME",
     "DEFAULT_DASHBOARD_TITLE",
+    "FLEET_DIMENSIONS",
+    "FleetScoreWeights",
+    "FleetScorer",
     "HtmlDashboardGenerator",
     "JsonReportGenerator",
     "MarkdownReportGenerator",
+    "SiteScorecard",
+    "TREND_DEGRADING",
+    "TREND_IMPROVING",
+    "TREND_NEW",
+    "TREND_STABLE",
+    "TREND_STABLE_THRESHOLD",
     "generate_all_reports",
     "generate_csv_report",
     "generate_html_dashboard",
     "generate_json_report",
     "generate_markdown_summary",
+    "render_fleet_html",
+    "render_fleet_markdown",
 ]
