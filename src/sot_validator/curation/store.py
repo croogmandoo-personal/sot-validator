@@ -775,6 +775,8 @@ class CurationStore:
         now: datetime,
         actor: str,
         reason: str,
+        *,
+        batch_id: Optional[str] = None,
     ) -> AuditLogEntry:
         existing = self.get_patch(incoming.target_type, incoming.target_id)
         resolved_site_id = self._infer_site_id(
@@ -816,6 +818,8 @@ class CurationStore:
             changes["custom_attributes"] = dict(incoming.custom_attributes)
         if incoming.deleted or (existing is not None and existing.deleted != incoming.deleted):
             changes["deleted"] = incoming.deleted
+        if batch_id is not None:
+            changes["batch_id"] = batch_id
 
         self._conn.execute(
             """
@@ -1174,6 +1178,8 @@ class CurationStore:
         actor: str,
         reason: str,
         site_id: Optional[str],
+        *,
+        batch_id: Optional[str] = None,
     ) -> AuditLogEntry:
         resolved_site_id = self._infer_site_id(norm_type, clean_id, site_id)
         existing = self.get_patch(norm_type, clean_id)
@@ -1270,12 +1276,15 @@ class CurationStore:
                         (dev.to_json(), dev.device_id),
                     )
 
+        changes: dict[str, Any] = {"deleted": True}
+        if batch_id is not None:
+            changes["batch_id"] = batch_id
         return self._record_audit(
             actor=actor,
             action="DELETE_ITEM",
             target_type=norm_type,
             target_id=clean_id,
-            changes={"deleted": True},
+            changes=changes,
             reason=reason,
             site_id=deleted_patch.site_id,
             timestamp=now,
