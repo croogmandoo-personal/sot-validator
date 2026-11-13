@@ -136,7 +136,7 @@ class _ScalarMetric(_Metric):
             for key, value in sorted(series.items())
         ]
 
-    def get(self, **labels: Any) -> float:
+    def get(self, /, **labels: Any) -> float:
         """Return the current value of a series (0 when never updated)."""
         key = self._key(labels)
         with self._lock:
@@ -153,7 +153,7 @@ class Counter(_ScalarMetric):
 
     metric_type = "counter"
 
-    def inc(self, amount: float = 1, **labels: Any) -> None:
+    def inc(self, /, amount: float = 1, **labels: Any) -> None:
         number = _validate_number(amount, "Counter increment")
         if number < 0:
             raise ValueError(f"Counter {self.name!r} increment must be >= 0, got {amount!r}")
@@ -167,19 +167,19 @@ class Gauge(_ScalarMetric):
 
     metric_type = "gauge"
 
-    def set(self, value: float, **labels: Any) -> None:
+    def set(self, /, value: float, **labels: Any) -> None:
         number = _validate_number(value, "Gauge value")
         key = self._key(labels)
         with self._lock:
             self._series[key] = number
 
-    def inc(self, amount: float = 1, **labels: Any) -> None:
+    def inc(self, /, amount: float = 1, **labels: Any) -> None:
         number = _validate_number(amount, "Gauge increment")
         key = self._key(labels)
         with self._lock:
             self._series[key] = self._series.get(key, 0.0) + number
 
-    def dec(self, amount: float = 1, **labels: Any) -> None:
+    def dec(self, /, amount: float = 1, **labels: Any) -> None:
         number = _validate_number(amount, "Gauge decrement")
         key = self._key(labels)
         with self._lock:
@@ -202,7 +202,7 @@ class Histogram(_Metric):
         super().__init__(name, help, labelnames, lock)
         self.buckets = buckets
 
-    def observe(self, value: float, **labels: Any) -> None:
+    def observe(self, /, value: float, **labels: Any) -> None:
         number = _validate_number(value, "Histogram observation")
         key = self._key(labels)
         with self._lock:

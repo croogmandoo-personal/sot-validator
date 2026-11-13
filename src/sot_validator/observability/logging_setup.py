@@ -116,7 +116,7 @@ class RedactionFilter(logging.Filter):
 
     def filter(self, record: logging.LogRecord) -> bool:
         for key, value in _extra_fields(record).items():
-            setattr(record, key, redact({key: value})[key])
+            record.__dict__[key] = redact({key: value})[key]
         return True
 
 

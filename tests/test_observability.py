@@ -411,6 +411,21 @@ def test_cyclic_extra_does_not_raise():
     assert 'loop=["<cycle>"]' in text.getvalue()
 
 
+@pytest.mark.parametrize("fmt", ["json", "text"])
+def test_non_string_extra_key_does_not_raise(fmt):
+    stream = io.StringIO()
+    configure_logging("INFO", fmt=fmt, stream=stream)
+    get_logger("x").info("m", extra={1: "v", "snmp_community": "public"})
+    output = stream.getvalue()
+    assert "public" not in output
+    if fmt == "json":
+        record = json.loads(output)
+        assert record["1"] == "v"
+        assert record["snmp_community"] == REDACTION_MASK
+    else:
+        assert '1="v"' in output
+
+
 def test_shared_non_cyclic_containers_are_not_marked():
     shared = {"a": 1}
     assert redact({"x": shared, "y": [shared, shared]}) == {"x": {"a": 1}, "y": [{"a": 1}, {"a": 1}]}
@@ -497,6 +512,24 @@ def test_update_values_accept_keyword_form():
     assert 'c{site="x"} 3' in lines
     assert "g 4" in lines
     assert "h_count 1" in lines
+
+
+def test_label_named_self_is_usable():
+    registry = MetricsRegistry()
+    counter = registry.counter("c", "C", ("self",))
+    counter.inc(self="a")
+    counter.inc(amount=2, self="a")
+    assert counter.get(self="a") == 3
+    gauge = registry.gauge("g", "G", ("self",))
+    gauge.set(value=5, self="a")
+    gauge.inc(self="a")
+    gauge.dec(amount=2, self="a")
+    hist = registry.histogram("h", "H", ("self",), buckets=(1.0,))
+    hist.observe(value=0.5, self="a")
+    lines = registry.render().splitlines()
+    assert 'c{self="a"} 3' in lines
+    assert 'g{self="a"} 4' in lines
+    assert 'h_count{self="a"} 1' in lines
 
 
 @pytest.mark.parametrize("name", ["1bad", "bad-name", "", "has space", "bad-name\n", "good_total\n"])
