@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import replace
+from dataclasses import dataclass, replace
+import hmac
 import ipaddress
 import json
+import secrets
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import re
 import threading
@@ -39,6 +41,76 @@ from sot_validator.topology.graph import TopologyGraphBuilder
 from sot_validator.workbench.ui import render_workbench_html
 
 _SLUG_RE = re.compile(r"[^a-z0-9]+")
+
+_BEARER_PREFIX = "Bearer "
+_DEFAULT_MAX_BODY_BYTES = 1_048_576
+
+# The page is one self-contained inline document, so inline script/style is
+# required; the constraint is that no third-party origin can be loaded.
+_CSP_POLICY = (
+    "default-src 'self'; "
+    "script-src 'self' 'unsafe-inline'; "
+    "style-src 'self' 'unsafe-inline'; "
+    "img-src 'self' data:; "
+    "object-src 'none'; "
+    "base-uri 'none'; "
+    "form-action 'self'"
+)
+
+_SECURITY_RESPONSE_HEADERS: tuple[tuple[str, str], ...] = (
+    ("Content-Security-Policy", _CSP_POLICY),
+    ("X-Content-Type-Options", "nosniff"),
+    ("X-Frame-Options", "DENY"),
+    ("Referrer-Policy", "no-referrer"),
+)
+
+_LOOPBACK_HOSTNAMES = frozenset({"localhost"})
+
+
+def _is_loopback_host(host: str) -> bool:
+    """Return True for `localhost`, an address in 127.0.0.0/8, or `::1`."""
+    if not isinstance(host, str):
+        return False
+    if host.lower() in _LOOPBACK_HOSTNAMES:
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
+def _is_valid_token(token: Any) -> bool:
+    """Return True when `token` can travel verbatim in an `Authorization` header."""
+    return (
+        isinstance(token, str)
+        and bool(token)
+        and all("\x21" <= char <= "\x7e" for char in token)
+    )
+
+
+@dataclass
+class WorkbenchSecurityConfig:
+    """Bearer-token, bind-scope and request-size policy for workbench writes."""
+
+    token: Optional[str] = None
+    allow_remote: bool = False
+    max_body_bytes: int = _DEFAULT_MAX_BODY_BYTES
+
+    def __post_init__(self) -> None:
+        if (
+            isinstance(self.max_body_bytes, bool)
+            or not isinstance(self.max_body_bytes, int)
+            or self.max_body_bytes <= 0
+        ):
+            raise ValueError("max_body_bytes must be a positive integer")
+        if self.token is None:
+            self.token = secrets.token_urlsafe(32)
+        elif not _is_valid_token(self.token):
+            # Never echo the supplied value: it is a secret.
+            raise ValueError(
+                "token must be a non-empty string of printable ASCII characters "
+                "without whitespace"
+            )
 
 
 def _slugify(value: str, prefix: str = "dev") -> str:
@@ -878,12 +950,30 @@ class WorkbenchServer(ThreadingHTTPServer):
         server_address: tuple[str, int],
         state: WorkbenchState,
         RequestHandlerClass: type[BaseHTTPRequestHandler] = None,  # type: ignore[assignment]
+        *,
+        security: Optional[WorkbenchSecurityConfig] = None,
     ) -> None:
         if not isinstance(state, WorkbenchState):
             raise ValueError("state must be a WorkbenchState instance")
+        if security is None:
+            security = WorkbenchSecurityConfig()
+        if not isinstance(security, WorkbenchSecurityConfig):
+            raise ValueError("security must be a WorkbenchSecurityConfig instance")
+        bind_host = server_address[0]
+        if not security.allow_remote and not _is_loopback_host(bind_host):
+            raise ValueError(
+                f"Refusing to bind the workbench to non-loopback host {bind_host!r}; "
+                "use WorkbenchSecurityConfig(allow_remote=True) to override"
+            )
         self.state = state
+        self._security = security
         handler_cls = RequestHandlerClass or WorkbenchRequestHandler
         super().__init__(server_address, handler_cls)
+
+    @property
+    def security(self) -> WorkbenchSecurityConfig:
+        """Bearer-token, bind-scope and body-size policy for this server."""
+        return self._security
 
 
 class WorkbenchRequestHandler(BaseHTTPRequestHandler):
@@ -895,12 +985,27 @@ class WorkbenchRequestHandler(BaseHTTPRequestHandler):
         # Suppress noisy default stderr logging during automated runs/tests
         return
 
-    def _send_json(self, status_code: int, payload: Mapping[str, Any]) -> None:
+    def end_headers(self) -> None:
+        # Single place every response (success or error) picks up hardening headers.
+        for name, value in _SECURITY_RESPONSE_HEADERS:
+            self.send_header(name, value)
+        super().end_headers()
+
+    def _send_json(
+        self,
+        status_code: int,
+        payload: Mapping[str, Any],
+        *,
+        close_connection: bool = False,
+    ) -> None:
         raw = json.dumps(payload).encode("utf-8")
         self.send_response(status_code)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(raw)))
         self.send_header("Cache-Control", "no-store")
+        if close_connection:
+            self.send_header("Connection", "close")
+            self.close_connection = True
         self.end_headers()
         self.wfile.write(raw)
 
@@ -931,6 +1036,78 @@ class WorkbenchRequestHandler(BaseHTTPRequestHandler):
         if not isinstance(parsed, Mapping):
             raise ValueError("JSON body must be an object")
         return dict(parsed)
+
+    def _token_authorized(self) -> bool:
+        header = self.headers.get("Authorization") or ""
+        if not header.startswith(_BEARER_PREFIX):
+            return False
+        supplied = header[len(_BEARER_PREFIX):].encode("utf-8", "replace")
+        expected = str(self.server.security.token).encode("utf-8")
+        return hmac.compare_digest(supplied, expected)
+
+    def _expected_origin(self) -> Optional[str]:
+        host = self.headers.get("Host")
+        if not host:
+            return None
+        return f"http://{host.strip()}"
+
+    def _origin_authorized(self) -> bool:
+        expected = self._expected_origin()
+        origin = self.headers.get("Origin")
+        if origin is not None:
+            return expected is not None and origin == expected
+        referer = self.headers.get("Referer")
+        if referer is not None:
+            if expected is None:
+                return False
+            try:
+                parsed_referer = urlparse(referer)
+            except ValueError:
+                return False
+            if not parsed_referer.netloc:
+                return False
+            return f"{parsed_referer.scheme}://{parsed_referer.netloc}" == expected
+        return True
+
+    def _body_size_authorized(self) -> bool:
+        content_length = self.headers.get("Content-Length")
+        if not content_length:
+            return True
+        try:
+            length = int(content_length)
+        except ValueError:
+            return True
+        return length <= self.server.security.max_body_bytes
+
+    def _authorize_mutation(self) -> bool:
+        """Run token, origin and body-size checks; send the rejection and return False on failure."""
+        if not self._token_authorized():
+            self._send_json(
+                401, {"status": "error", "error": "Missing or invalid bearer token"}
+            )
+            return False
+        if not self._origin_authorized():
+            self._send_json(
+                403, {"status": "error", "error": "Cross-origin write rejected"}
+            )
+            return False
+        if not self._body_size_authorized():
+            self._send_json(
+                413,
+                {"status": "error", "error": "Request body too large"},
+                close_connection=True,
+            )
+            return False
+        return True
+
+    def _reject_unsupported_mutation(self) -> None:
+        if not self._authorize_mutation():
+            return
+        self._send_json(
+            405,
+            {"status": "error", "error": "Method not allowed"},
+            close_connection=True,
+        )
 
     def do_GET(self) -> None:
         parsed_url = urlparse(self.path)
@@ -989,6 +1166,9 @@ class WorkbenchRequestHandler(BaseHTTPRequestHandler):
             self._send_json(400, {"status": "error", "error": str(exc)})
 
     def do_POST(self) -> None:
+        if not self._authorize_mutation():
+            return
+
         parsed_url = urlparse(self.path)
         route = parsed_url.path.rstrip("/") or "/"
 
@@ -1070,19 +1250,31 @@ class WorkbenchRequestHandler(BaseHTTPRequestHandler):
         except (ValueError, KeyError, TypeError) as exc:
             self._send_json(400, {"status": "error", "error": str(exc)})
 
+    def do_PUT(self) -> None:
+        self._reject_unsupported_mutation()
+
+    def do_PATCH(self) -> None:
+        self._reject_unsupported_mutation()
+
+    def do_DELETE(self) -> None:
+        self._reject_unsupported_mutation()
+
 
 def create_workbench_server(
     state: WorkbenchState,
     host: str = "127.0.0.1",
     port: int = 8765,
+    *,
+    security: Optional[WorkbenchSecurityConfig] = None,
 ) -> WorkbenchServer:
     """Create a WorkbenchServer bound to `(host, port)` for `state`."""
-    return WorkbenchServer((host, port), state)
+    return WorkbenchServer((host, port), state, security=security)
 
 
 __all__ = [
     "WorkbenchNotFoundError",
     "WorkbenchRequestHandler",
+    "WorkbenchSecurityConfig",
     "WorkbenchServer",
     "WorkbenchState",
     "create_workbench_server",

@@ -10,6 +10,7 @@ import re
 import threading
 from typing import Any
 from urllib.error import HTTPError
+from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 
 from sot_validator.models import (
@@ -26,7 +27,23 @@ from sot_validator.models import (
 )
 from sot_validator.topology.device_types import DeviceTypeCatalog
 from sot_validator.topology.graph import TopologyGraphBuilder
-from sot_validator.workbench import WorkbenchState, create_workbench_server, render_workbench_html
+from sot_validator.workbench import (
+    WorkbenchSecurityConfig,
+    WorkbenchState,
+    create_workbench_server,
+    render_workbench_html,
+)
+
+WORKBENCH_TEST_TOKEN = "test-workbench-token"
+
+
+def _auth_headers(url: str) -> dict[str, str]:
+    parsed = urlparse(url)
+    return {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {WORKBENCH_TEST_TOKEN}",
+        "Origin": f"{parsed.scheme}://{parsed.netloc}",
+    }
 
 
 def _sample_site() -> Site:
@@ -125,7 +142,12 @@ def _sample_site() -> Site:
 
 @contextmanager
 def _live(state: WorkbenchState) -> Any:
-    server = create_workbench_server(state, host="127.0.0.1", port=0)
+    server = create_workbench_server(
+        state,
+        host="127.0.0.1",
+        port=0,
+        security=WorkbenchSecurityConfig(token=WORKBENCH_TEST_TOKEN),
+    )
     host, port = server.server_address[:2]
     base_url = f"http://{host}:{port}"
     thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -153,7 +175,7 @@ def _http_post_json(url: str, payload: Any) -> tuple[int, dict[str, Any]]:
     req = Request(
         url,
         data=json.dumps(payload).encode("utf-8"),
-        headers={"Content-Type": "application/json"},
+        headers=_auth_headers(url),
         method="POST",
     )
     try:

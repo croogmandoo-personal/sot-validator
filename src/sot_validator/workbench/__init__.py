@@ -5,6 +5,7 @@ from __future__ import annotations
 from sot_validator.workbench.server import (
     WorkbenchNotFoundError,
     WorkbenchRequestHandler,
+    WorkbenchSecurityConfig,
     WorkbenchServer,
     WorkbenchState,
     create_workbench_server,
@@ -18,6 +19,7 @@ __all__ = [
     "DEFAULT_WORKBENCH_TITLE",
     "WorkbenchNotFoundError",
     "WorkbenchRequestHandler",
+    "WorkbenchSecurityConfig",
     "WorkbenchServer",
     "WorkbenchState",
     "create_workbench_server",

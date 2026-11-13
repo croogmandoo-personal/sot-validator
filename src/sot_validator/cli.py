@@ -128,6 +128,7 @@ from sot_validator.topology import (
     TopologyGraphBuilder,
 )
 from sot_validator.workbench import (
+    WorkbenchSecurityConfig,
     WorkbenchState,
     create_workbench_server,
     render_workbench_html,
@@ -2541,7 +2542,24 @@ def cmd_discover(args: argparse.Namespace) -> int:
     return 0
 
 
+def _workbench_url(server_address: Sequence[Any]) -> str:
+    bound_host, bound_port = server_address[:2]
+    host = "127.0.0.1" if bound_host in ("0.0.0.0", "::", "") else str(bound_host)
+    if ":" in host:
+        host = f"[{host}]"
+    return f"http://{host}:{bound_port}/"
+
+
 def cmd_serve(args: argparse.Namespace) -> int:
+    try:
+        security = WorkbenchSecurityConfig(
+            token=getattr(args, "token", None),
+            allow_remote=bool(getattr(args, "allow_remote", False)),
+        )
+    except ValueError as exc:
+        print(f"error: --token rejected: {exc}", file=sys.stderr)
+        return 2
+
     site = _load_single_site_snapshot(
         getattr(args, "snapshot", None), args, default_to_fixtures=True
     )
@@ -2559,14 +2577,36 @@ def cmd_serve(args: argparse.Namespace) -> int:
             store=store,
             initial_results=initial_results,
         )
-        server = create_workbench_server(
-            state, host=args.host, port=int(args.port)
-        )
+        try:
+            server = create_workbench_server(
+                state, host=args.host, port=int(args.port), security=security
+            )
+        except ValueError:
+            # The only ValueError here is the non-loopback bind refusal.
+            print(
+                f"error: refusing to bind the workbench to non-loopback host "
+                f"{args.host!r}; pass --allow-remote to expose it on the network",
+                file=sys.stderr,
+            )
+            return 2
+        except (OSError, OverflowError) as exc:
+            print(
+                f"error: cannot bind the workbench to {args.host}:{args.port}: "
+                f"{getattr(exc, 'strerror', None) or exc}",
+                file=sys.stderr,
+            )
+            return 2
         try:
             if getattr(args, "check", False):
                 _ = render_workbench_html(state)
                 _ = state.get_state_payload()
                 return 0
+
+            print(
+                f"Workbench listening; open {_workbench_url(server.server_address)}"
+                f"#token={security.token}",
+                flush=True,
+            )
 
             if getattr(args, "once", False):
                 bound_host, bound_port = server.server_address[:2]
@@ -4560,6 +4600,18 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=5100,
         help="TCP port for the Workbench HTTP server (default: 5100).",
+    )
+    serve_parser.add_argument(
+        "--token",
+        type=str,
+        default=None,
+        help="Bearer token for workbench writes (default: a fresh random token per start).",
+    )
+    serve_parser.add_argument(
+        "--allow-remote",
+        action="store_true",
+        default=False,
+        help="Allow binding --host to a non-loopback address (writes still need the token).",
     )
     serve_parser.add_argument(
         "--snapshot",
