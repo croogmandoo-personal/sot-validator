@@ -1,0 +1,63 @@
+usage: sot-validator reclaim-ports [-h] [--snapshot-dir SNAPSHOT_DIR] [--output-dir OUTPUT_DIR]
+                                   [--output OUTPUT_FILE] [--db-path DB_PATH]
+                                   [--streaks-json STREAKS_JSON] [--lldp-json LLDP_JSON]
+                                   [--snmp-fixture SNMP_FIXTURE] [--dialect {exos,voss}]
+                                   [--min-inactive-runs MIN_INACTIVE_RUNS]
+                                   [--min-inactive-days MIN_INACTIVE_DAYS]
+                                   [--evaluation-time EVALUATION_TIME]
+                                   [--site-ids SITE_IDS [SITE_IDS ...]] [--all-sites]
+                                   [--batch-size BATCH_SIZE] [--rate-limit RATE_LIMIT]
+                                   [--no-resume] [--fixtures] [--num-sites NUM_SITES]
+                                   [--fixture-path FIXTURE_PATH] [--sql-dump SQL_DUMP]
+                                   [--sqlite-path SQLITE_PATH] [--csv-dir CSV_DIR]
+                                   [--json-export JSON_EXPORT] [--scrape-url SCRAPE_URL]
+
+options:
+  -h, --help            show this help message and exit
+  --snapshot-dir SNAPSHOT_DIR
+                        Directory containing extracted site snapshots.
+  --output-dir OUTPUT_DIR
+                        Directory to write port_reclamation_plan.json and EXOS/VOSS CLI scripts
+                        (default: ./reports).
+  --output, --output-file OUTPUT_FILE
+                        Optional custom path for port_reclamation_plan.json.
+  --db-path, --history-db DB_PATH
+                        Optional HistoryStore SQLite DB or JSON file for port inactivity streaks.
+  --streaks-json STREAKS_JSON
+                        Optional JSON file containing streak summaries or history_summary.json.
+  --lldp-json LLDP_JSON
+                        Optional JSON file containing LLDP/CDP neighbor observations.
+  --snmp-fixture SNMP_FIXTURE
+                        Optional SNMP discovery fixture JSON file.
+  --dialect {exos,voss}
+                        Primary Extreme CLI dialect for script generation (default: exos).
+  --min-inactive-runs MIN_INACTIVE_RUNS
+                        Minimum consecutive inactive runs required for port reclamation (default:
+                        3).
+  --min-inactive-days MIN_INACTIVE_DAYS
+                        Minimum inactive duration in days required for port reclamation (default:
+                        30.0).
+  --evaluation-time EVALUATION_TIME
+                        Optional reference ISO-8601 UTC timestamp.
+  --site-ids SITE_IDS [SITE_IDS ...]
+                        Target site IDs (comma-separated or space-separated, e.g.
+                        site-001,site-002).
+  --all-sites           Process all available sites.
+  --batch-size BATCH_SIZE
+                        Number of sites per extraction batch (default: 10).
+  --rate-limit RATE_LIMIT
+                        Polite delay in seconds between per-site requests (default: 0.0).
+  --no-resume           Disable checkpoint resume and re-extract all target sites.
+  --fixtures            Use deterministic built-in FixtureSoTClient inventory.
+  --num-sites NUM_SITES
+                        Number of fixture sites to generate when --fixtures is set (default: 3).
+  --fixture-path FIXTURE_PATH
+                        Path to a JSON fixture file for FixtureSoTClient.
+  --sql-dump SQL_DUMP   Path to a read-only SQL dump file (.sql).
+  --sqlite-path SQLITE_PATH
+                        Path to a read-only SQLite database export.
+  --csv-dir CSV_DIR     Path to a directory containing SoT CSV export tables.
+  --json-export JSON_EXPORT
+                        Path to a JSON export file of SoT tables or sites.
+  --scrape-url SCRAPE_URL
+                        Base URL for read-only GET HTML scraping of the legacy SoT.

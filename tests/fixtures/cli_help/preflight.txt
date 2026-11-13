@@ -1,0 +1,56 @@
+usage: sot-validator preflight [-h] [--snapshot-dir SNAPSHOT_DIR] [--output-dir OUTPUT_DIR]
+                               [--output OUTPUT] [--pilot-sites PILOT_SITES [PILOT_SITES ...]]
+                               [--target-subnets-json TARGET_SUBNETS_JSON]
+                               [--vcenter-json VCENTER_JSON] [--snmp-fixture SNMP_FIXTURE]
+                               [--recommended-min-sites RECOMMENDED_MIN_SITES]
+                               [--recommended-max-sites RECOMMENDED_MAX_SITES] [--strict]
+                               [--site-ids SITE_IDS [SITE_IDS ...]] [--all-sites]
+                               [--batch-size BATCH_SIZE] [--rate-limit RATE_LIMIT] [--no-resume]
+                               [--fixtures] [--num-sites NUM_SITES] [--fixture-path FIXTURE_PATH]
+                               [--sql-dump SQL_DUMP] [--sqlite-path SQLITE_PATH]
+                               [--csv-dir CSV_DIR] [--json-export JSON_EXPORT]
+                               [--scrape-url SCRAPE_URL]
+
+options:
+  -h, --help            show this help message and exit
+  --snapshot-dir SNAPSHOT_DIR
+                        Directory containing extracted site snapshots.
+  --output-dir OUTPUT_DIR
+                        Directory to write preflight_report.json (default: ./reports).
+  --output OUTPUT       Optional explicit output file path for preflight_report.json.
+  --pilot-sites PILOT_SITES [PILOT_SITES ...]
+                        Pilot site IDs (comma-separated or space-separated; defaults to all loaded
+                        sites).
+  --target-subnets-json TARGET_SUBNETS_JSON
+                        Optional JSON file mapping site_id -> [cidr, ...].
+  --vcenter-json VCENTER_JSON
+                        Optional vCenter inventory fixture JSON file.
+  --snmp-fixture SNMP_FIXTURE
+                        Optional SNMP discovery fixture JSON file.
+  --recommended-min-sites RECOMMENDED_MIN_SITES
+                        Recommended minimum number of pilot sites (default: 3).
+  --recommended-max-sites RECOMMENDED_MAX_SITES
+                        Recommended maximum number of pilot sites (default: 5).
+  --strict              Return non-zero exit code (1) if report.ready is False.
+  --site-ids SITE_IDS [SITE_IDS ...]
+                        Target site IDs (comma-separated or space-separated, e.g.
+                        site-001,site-002).
+  --all-sites           Process all available sites.
+  --batch-size BATCH_SIZE
+                        Number of sites per extraction batch (default: 10).
+  --rate-limit RATE_LIMIT
+                        Polite delay in seconds between per-site requests (default: 0.0).
+  --no-resume           Disable checkpoint resume and re-extract all target sites.
+  --fixtures            Use deterministic built-in FixtureSoTClient inventory.
+  --num-sites NUM_SITES
+                        Number of fixture sites to generate when --fixtures is set (default: 3).
+  --fixture-path FIXTURE_PATH
+                        Path to a JSON fixture file for FixtureSoTClient.
+  --sql-dump SQL_DUMP   Path to a read-only SQL dump file (.sql).
+  --sqlite-path SQLITE_PATH
+                        Path to a read-only SQLite database export.
+  --csv-dir CSV_DIR     Path to a directory containing SoT CSV export tables.
+  --json-export JSON_EXPORT
+                        Path to a JSON export file of SoT tables or sites.
+  --scrape-url SCRAPE_URL
+                        Base URL for read-only GET HTML scraping of the legacy SoT.

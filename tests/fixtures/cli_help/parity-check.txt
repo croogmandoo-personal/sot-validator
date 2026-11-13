@@ -1,0 +1,64 @@
+usage: sot-validator parity-check [-h] [--snapshot-dir SNAPSHOT_DIR] [--output-dir OUTPUT_DIR]
+                                  [--output OUTPUT_FILE] [--golden-bundle GOLDEN_BUNDLE]
+                                  [--modern-bundle MODERN_BUNDLE]
+                                  [--target-platform {netbox,nautobot}]
+                                  [--results-file RESULTS_FILE]
+                                  [--reconciliation-file RECONCILIATION_FILE]
+                                  [--stale-item-ids [STALE_ITEM_IDS ...]]
+                                  [--waived-discrepancy-ids [WAIVE_DISCREPANCIES ...]]
+                                  [--waive-all] [--evaluation-time EVALUATED_AT]
+                                  [--site-ids SITE_IDS [SITE_IDS ...]] [--all-sites]
+                                  [--batch-size BATCH_SIZE] [--rate-limit RATE_LIMIT]
+                                  [--no-resume] [--fixtures] [--num-sites NUM_SITES]
+                                  [--fixture-path FIXTURE_PATH] [--sql-dump SQL_DUMP]
+                                  [--sqlite-path SQLITE_PATH] [--csv-dir CSV_DIR]
+                                  [--json-export JSON_EXPORT] [--scrape-url SCRAPE_URL]
+
+options:
+  -h, --help            show this help message and exit
+  --snapshot-dir SNAPSHOT_DIR
+                        Directory containing extracted site snapshots.
+  --output-dir OUTPUT_DIR
+                        Directory to write migration_parity_report.json (default: ./reports).
+  --output, --output-file OUTPUT_FILE
+                        Optional explicit output path for migration_parity_report.json.
+  --golden-bundle GOLDEN_BUNDLE
+                        Optional path to expected golden ModernSoTExporter JSON bundle.
+  --modern-bundle MODERN_BUNDLE
+                        Optional path to target NetBox/Nautobot JSON bundle under test.
+  --target-platform {netbox,nautobot}
+                        Target modern SoT platform schema (default: netbox).
+  --results-file RESULTS_FILE
+                        Optional path to validation_results.json.
+  --reconciliation-file RECONCILIATION_FILE
+                        Optional path to reconciliation_report.json.
+  --stale-item-ids [STALE_ITEM_IDS ...]
+                        Optional explicit stale item IDs that must not leak into Modern SoT.
+  --waived-discrepancy-ids, --waive-discrepancies [WAIVE_DISCREPANCIES ...]
+                        Optional discrepancy IDs or item identifiers to waive during readiness
+                        scoring.
+  --waive-all           Waive all parity discrepancies.
+  --evaluation-time, --evaluated-at EVALUATED_AT
+                        Optional ISO-8601 timestamp for scorecard evaluation.
+  --site-ids SITE_IDS [SITE_IDS ...]
+                        Target site IDs (comma-separated or space-separated, e.g.
+                        site-001,site-002).
+  --all-sites           Process all available sites.
+  --batch-size BATCH_SIZE
+                        Number of sites per extraction batch (default: 10).
+  --rate-limit RATE_LIMIT
+                        Polite delay in seconds between per-site requests (default: 0.0).
+  --no-resume           Disable checkpoint resume and re-extract all target sites.
+  --fixtures            Use deterministic built-in FixtureSoTClient inventory.
+  --num-sites NUM_SITES
+                        Number of fixture sites to generate when --fixtures is set (default: 3).
+  --fixture-path FIXTURE_PATH
+                        Path to a JSON fixture file for FixtureSoTClient.
+  --sql-dump SQL_DUMP   Path to a read-only SQL dump file (.sql).
+  --sqlite-path SQLITE_PATH
+                        Path to a read-only SQLite database export.
+  --csv-dir CSV_DIR     Path to a directory containing SoT CSV export tables.
+  --json-export JSON_EXPORT
+                        Path to a JSON export file of SoT tables or sites.
+  --scrape-url SCRAPE_URL
+                        Base URL for read-only GET HTML scraping of the legacy SoT.

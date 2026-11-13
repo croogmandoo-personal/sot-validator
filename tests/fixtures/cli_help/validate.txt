@@ -1,0 +1,61 @@
+usage: sot-validator validate [-h] [--snapshot-dir SNAPSHOT_DIR] [--output-dir OUTPUT_DIR]
+                              [--site-ids SITE_IDS [SITE_IDS ...]] [--all-sites]
+                              [--batch-size BATCH_SIZE] [--rate-limit RATE_LIMIT] [--no-resume]
+                              [--fixtures] [--num-sites NUM_SITES] [--fixture-path FIXTURE_PATH]
+                              [--sql-dump SQL_DUMP] [--sqlite-path SQLITE_PATH]
+                              [--csv-dir CSV_DIR] [--json-export JSON_EXPORT]
+                              [--scrape-url SCRAPE_URL] [--vcenter-json VCENTER_JSON]
+                              [--snmp-fixture SNMP_FIXTURE] [--ad-json AD_JSON]
+                              [--dns-json DNS_JSON] [--dhcp-json DHCP_JSON]
+                              [--active-within-days ACTIVE_WITHIN_DAYS]
+                              [--stale-after-days STALE_AFTER_DAYS]
+                              [--evaluation-time EVALUATION_TIME]
+                              [--include-ips | --no-include-ips]
+
+options:
+  -h, --help            show this help message and exit
+  --snapshot-dir SNAPSHOT_DIR
+                        Directory containing extracted site snapshots.
+  --output-dir OUTPUT_DIR
+                        Directory to write validation_results.json and
+                        remediation_action_plan.json.
+  --site-ids SITE_IDS [SITE_IDS ...]
+                        Target site IDs (comma-separated or space-separated, e.g.
+                        site-001,site-002).
+  --all-sites           Process all available sites.
+  --batch-size BATCH_SIZE
+                        Number of sites per extraction batch (default: 10).
+  --rate-limit RATE_LIMIT
+                        Polite delay in seconds between per-site requests (default: 0.0).
+  --no-resume           Disable checkpoint resume and re-extract all target sites.
+  --fixtures            Use deterministic built-in FixtureSoTClient inventory.
+  --num-sites NUM_SITES
+                        Number of fixture sites to generate when --fixtures is set (default: 3).
+  --fixture-path FIXTURE_PATH
+                        Path to a JSON fixture file for FixtureSoTClient.
+  --sql-dump SQL_DUMP   Path to a read-only SQL dump file (.sql).
+  --sqlite-path SQLITE_PATH
+                        Path to a read-only SQLite database export.
+  --csv-dir CSV_DIR     Path to a directory containing SoT CSV export tables.
+  --json-export JSON_EXPORT
+                        Path to a JSON export file of SoT tables or sites.
+  --scrape-url SCRAPE_URL
+                        Base URL for read-only GET HTML scraping of the legacy SoT.
+  --vcenter-json VCENTER_JSON
+                        Path to a multi-vCenter inventory JSON snapshot.
+  --snmp-fixture SNMP_FIXTURE
+                        Path to a read-only SNMP/ICMP discovery fixture JSON file.
+  --ad-json AD_JSON     Path to an Active Directory computer account export JSON file.
+  --dns-json DNS_JSON   Path to a DNS forward/reverse (A/PTR) records JSON file.
+  --dhcp-json DHCP_JSON
+                        Path to a /24-scoped DHCP lease export JSON file.
+  --active-within-days ACTIVE_WITHIN_DAYS
+                        Threshold in days within which signals are considered active (default:
+                        7.0).
+  --stale-after-days STALE_AFTER_DAYS
+                        Threshold in days beyond which inactive signals are considered stale
+                        (default: 30.0).
+  --evaluation-time EVALUATION_TIME
+                        Reference ISO-8601 UTC timestamp for signal recency evaluation.
+  --include-ips, --no-include-ips
+                        Include IPAddress records in site validation results (default: True).

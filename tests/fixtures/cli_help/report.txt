@@ -1,0 +1,43 @@
+usage: sot-validator report [-h] [--results-file RESULTS_FILE] [--input-dir INPUT_DIR]
+                            [--snapshot-dir SNAPSHOT_DIR] [--output-dir OUTPUT_DIR]
+                            [--evaluation-time EVALUATION_TIME] [--html-dashboard]
+                            [--html-output HTML_OUTPUT] [--manifest-file MANIFEST_FILE]
+                            [--reconciliation-file RECONCILIATION_FILE]
+                            [--port-plan-file PORT_PLAN_FILE] [--parity-file PARITY_FILE]
+                            [--ups-health-file UPS_HEALTH_FILE]
+                            [--itsm-tickets-file ITSM_TICKETS_FILE]
+
+options:
+  -h, --help            show this help message and exit
+  --results-file RESULTS_FILE
+                        Path to validation_results.json.
+  --input-dir INPUT_DIR
+                        Directory containing validation_results.json (and optional snapshots).
+  --snapshot-dir SNAPSHOT_DIR
+                        Directory containing site snapshots for metadata enrichment.
+  --output-dir OUTPUT_DIR
+                        Directory to write validation_report.json, validation_report.csv,
+                        validation_summary.md, and remediation_action_plan.json.
+  --evaluation-time EVALUATION_TIME
+                        Optional timestamp override for report generation.
+  --html-dashboard      Generate self-contained interactive HTML5 dashboard
+                        (validation_dashboard.html).
+  --html-output HTML_OUTPUT
+                        Optional custom output path for the HTML5 dashboard.
+  --manifest-file, --manifest MANIFEST_FILE
+                        Optional Phase 2 RemediationApprovalManifest JSON file to embed in the
+                        HTML dashboard.
+  --reconciliation-file RECONCILIATION_FILE
+                        Optional Phase 3 ReconciliationReport JSON file to embed in the HTML
+                        dashboard.
+  --port-plan-file, --port-plan PORT_PLAN_FILE
+                        Optional Phase 4 PortReclamationPlan JSON file to embed in the HTML
+                        dashboard.
+  --parity-file, --parity-report PARITY_FILE
+                        Optional Phase 5 MigrationParityReport JSON file to embed in the HTML
+                        dashboard.
+  --ups-health-file, --ups-report UPS_HEALTH_FILE
+                        Optional Phase 6 UpsFleetHealthReport JSON file to embed in the HTML
+                        dashboard.
+  --itsm-tickets-file ITSM_TICKETS_FILE
+                        Optional Phase 6 ITSM tickets JSON file to embed in the HTML dashboard.

@@ -1,0 +1,53 @@
+usage: sot-validator [-h]
+                     {extract,validate,report,run,history,quarantine,remediate,reconcile,campaign,preflight,reclaim-ports,export-modern-sot,migrate-export,parity-check,migration-parity,ups-health,itsm,itsm-sync,discover,serve,curate,topology,fingerprint,map-ports,diff-scans} ...
+
+Read-only batch inventory validation system for legacy Network Source of Truth.
+
+positional arguments:
+  {extract,validate,report,run,history,quarantine,remediate,reconcile,campaign,preflight,reclaim-ports,export-modern-sot,migrate-export,parity-check,migration-parity,ups-health,itsm,itsm-sync,discover,serve,curate,topology,fingerprint,map-ports,diff-scans}
+    extract             Extract read-only site inventory batches into local snapshots.
+    validate            Evaluate passive, hypervisor, directory/DNS, and scoped active signals
+                        against site snapshots.
+    report              Generate JSON, CSV, Markdown, and optional interactive HTML validation
+                        reports.
+    run                 Execute end-to-end extraction, signal validation, multi-format reporting,
+                        and Phase 2 dry-run plan generation.
+    history             Record validation runs in HistoryStore, query stale streaks, and analyze
+                        state-transition drift.
+    quarantine          Evaluate stale streaks against QuarantinePolicy and generate/approve
+                        SHA-256 signed manifests.
+    remediate           Execute a SHA-256-verified RemediationApprovalManifest or generate/apply
+                        rollback plans.
+    reconcile           Reconcile live vCenter, SNMP, ARP, and ICMP discovery feeds against SoT
+                        snapshots to surface untracked assets.
+    campaign            Execute rolling multi-site validation waves with outage circuit breakers
+                        and alert sinks.
+    preflight           Run pre-flight cutover readiness checks verifying /24 scoping, read-only
+                        guardrails, and endpoint credentials.
+    reclaim-ports       Generate staged dry-run Extreme Networks switch port & PoE reclamation
+                        plans with LLDP Uplink Guard.
+    export-modern-sot (migrate-export)
+                        Export golden validated inventory into normalized NetBox or Nautobot JSON
+                        and CSV bundles.
+    parity-check (migration-parity)
+                        Evaluate dual-run parity and per-site migration readiness scorecards
+                        between legacy and modern SoT.
+    ups-health          Evaluate APC UPS PowerNet-MIB battery replacement, runtime, load, and
+                        thermal health across sites.
+    itsm (itsm-sync)    Generate, approve, serialize, and verify ServiceNow/Jira/Webhook ITSM
+                        change tickets.
+    discover            Run two-stage /16-to-/24 subnet discovery and bootstrap a canonical Site
+                        snapshot.
+    serve               Launch the interactive Web Workbench HTTP server and REST API.
+    curate              Apply operator inventory patches, instantiate template devices, manage
+                        switch ports, and inspect audit logs.
+    topology            Build a site network TopologyGraph (with optional curation overlay) and
+                        export JSON and Mermaid diagrams.
+    fingerprint         Fingerprint vendor/model/OS from collected SSH/HTTP/TLS/SNMP banners and
+                        enrich a site snapshot (no network I/O).
+    map-ports           Map switch FDB / MAC tables to ports, infer access/trunk/uplink modes, and
+                        bind downstream MACs.
+    diff-scans          Diff two discovery site snapshots and optionally dispatch drift alerts.
+
+options:
+  -h, --help            show this help message and exit

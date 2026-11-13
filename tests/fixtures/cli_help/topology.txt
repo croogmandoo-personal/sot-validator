@@ -1,0 +1,55 @@
+usage: sot-validator topology [-h] [--snapshot SNAPSHOT] [--snapshot-dir SNAPSHOT_DIR]
+                              [--curation-db CURATION_DB] [--results-file RESULTS_FILE]
+                              [--site-id SITE_ID] [--include-unconnected-ports]
+                              [--output-json OUTPUT_JSON] [--output-mermaid OUTPUT_MERMAID]
+                              [--output-dir OUTPUT_DIR] [--site-ids SITE_IDS [SITE_IDS ...]]
+                              [--all-sites] [--batch-size BATCH_SIZE] [--rate-limit RATE_LIMIT]
+                              [--no-resume] [--fixtures] [--num-sites NUM_SITES]
+                              [--fixture-path FIXTURE_PATH] [--sql-dump SQL_DUMP]
+                              [--sqlite-path SQLITE_PATH] [--csv-dir CSV_DIR]
+                              [--json-export JSON_EXPORT] [--scrape-url SCRAPE_URL]
+
+options:
+  -h, --help            show this help message and exit
+  --snapshot, --snapshot-file SNAPSHOT
+                        Path to a Site JSON snapshot file or SnapshotStore directory.
+  --snapshot-dir SNAPSHOT_DIR
+                        Optional SnapshotStore directory when --snapshot is not specified.
+  --curation-db, --db-path CURATION_DB
+                        Optional CurationStore SQLite DB or JSON state file to overlay before
+                        graph construction.
+  --results-file RESULTS_FILE
+                        Optional validation_results.json file to enrich topology nodes with
+                        classifications.
+  --site-id SITE_ID     Optional site ID to select when loading from a multi-site snapshot.
+  --include-unconnected-ports
+                        Include down/unconnected switch ports as nodes in the topology graph.
+  --output-json, --output OUTPUT_JSON
+                        Output file path for the serialized TopologyGraph JSON.
+  --output-mermaid OUTPUT_MERMAID
+                        Output file path for the Mermaid flowchart LR diagram (.mmd).
+  --output-dir OUTPUT_DIR
+                        Optional output directory to write topology_graph.json and
+                        topology_graph.mmd.
+  --site-ids SITE_IDS [SITE_IDS ...]
+                        Target site IDs (comma-separated or space-separated, e.g.
+                        site-001,site-002).
+  --all-sites           Process all available sites.
+  --batch-size BATCH_SIZE
+                        Number of sites per extraction batch (default: 10).
+  --rate-limit RATE_LIMIT
+                        Polite delay in seconds between per-site requests (default: 0.0).
+  --no-resume           Disable checkpoint resume and re-extract all target sites.
+  --fixtures            Use deterministic built-in FixtureSoTClient inventory.
+  --num-sites NUM_SITES
+                        Number of fixture sites to generate when --fixtures is set (default: 3).
+  --fixture-path FIXTURE_PATH
+                        Path to a JSON fixture file for FixtureSoTClient.
+  --sql-dump SQL_DUMP   Path to a read-only SQL dump file (.sql).
+  --sqlite-path SQLITE_PATH
+                        Path to a read-only SQLite database export.
+  --csv-dir CSV_DIR     Path to a directory containing SoT CSV export tables.
+  --json-export JSON_EXPORT
+                        Path to a JSON export file of SoT tables or sites.
+  --scrape-url SCRAPE_URL
+                        Base URL for read-only GET HTML scraping of the legacy SoT.

@@ -1,0 +1,28 @@
+usage: sot-validator history [-h] [--db-path DB_PATH] [--import-json IMPORT_JSON]
+                             [--record RESULTS_FILE] [--run-id RUN_ID] [--recorded-at RECORDED_AT]
+                             [--site-id SITE_ID] [--min-consecutive-stale MIN_CONSECUTIVE_STALE]
+                             [--export-json EXPORT_JSON] [--drift-output DRIFT_OUTPUT]
+                             [--output-dir OUTPUT_DIR]
+
+options:
+  -h, --help            show this help message and exit
+  --db-path DB_PATH     Path to SQLite HistoryStore database or exported JSON file (default:
+                        ./history.db).
+  --import-json IMPORT_JSON
+                        Optional HistoryStore JSON state file to import before processing.
+  --record, --results-file RESULTS_FILE
+                        Path to validation_results.json to record as a new validation run.
+  --run-id RUN_ID       Optional explicit run ID when recording a run or querying drift.
+  --recorded-at RECORDED_AT
+                        Optional ISO-8601 UTC timestamp when recording a validation run.
+  --site-id SITE_ID     Optional site ID filter for streaks and drift events.
+  --min-consecutive-stale MIN_CONSECUTIVE_STALE
+                        Minimum consecutive stale runs filter when listing item streaks (default:
+                        0).
+  --export-json EXPORT_JSON
+                        Optional path to export full HistoryStore state as JSON.
+  --drift-output, --output-file DRIFT_OUTPUT
+                        Optional file path to write JSON summary of runs, streaks, and drift
+                        events.
+  --output-dir OUTPUT_DIR
+                        Optional directory to write history_summary.json and drift_report.json.

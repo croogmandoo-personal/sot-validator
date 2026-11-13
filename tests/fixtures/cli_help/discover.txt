@@ -1,0 +1,62 @@
+usage: sot-validator discover [-h] [--cidr CIDR] [--site-id SITE_ID] [--site-name SITE_NAME]
+                              [--output OUTPUT] [--output-dir OUTPUT_DIR]
+                              [--snapshot-dir SNAPSHOT_DIR]
+                              [--gateway-octets GATEWAY_OCTETS [GATEWAY_OCTETS ...]]
+                              [--tcp-ports TCP_PORTS [TCP_PORTS ...]]
+                              [--max-concurrency MAX_CONCURRENCY]
+                              [--max-active-subnets MAX_ACTIVE_SUBNETS]
+                              [--ping-timeout PING_TIMEOUT] [--tcp-timeout TCP_TIMEOUT]
+                              [--mock-config MOCK_CONFIG] [--fixtures] [--router-arp ROUTER_ARP]
+                              [--dhcp-leases DHCP_LEASES] [--proxmox-snapshot PROXMOX_SNAPSHOT]
+                              [--evaluation-time EVALUATION_TIME] [--validate] [--report]
+                              [--html-dashboard] [--html-output HTML_OUTPUT]
+
+options:
+  -h, --help            show this help message and exit
+  --cidr CIDR           Target IPv4 /16 or /24 CIDR block to discover (default: 10.42.0.0/16).
+  --site-id SITE_ID     Identifier for the generated Site snapshot (default: site-discovered).
+  --site-name SITE_NAME
+                        Human-readable name for the generated Site snapshot (default: Discovered
+                        Site).
+  --output, --output-file OUTPUT
+                        Optional output file path for the discovered Site JSON snapshot.
+  --output-dir OUTPUT_DIR
+                        Optional directory to write discovered_site.json, validation_results.json,
+                        and reports.
+  --snapshot-dir SNAPSHOT_DIR
+                        Optional SnapshotStore directory to persist the discovered Site.
+  --gateway-octets GATEWAY_OCTETS [GATEWAY_OCTETS ...]
+                        Gateway host fourth octets to probe during /16 Stage 1 discovery (default:
+                        1).
+  --tcp-ports TCP_PORTS [TCP_PORTS ...]
+                        TCP ports to probe on discovered hosts.
+  --max-concurrency MAX_CONCURRENCY
+                        Maximum concurrent async network probes (default: 128).
+  --max-active-subnets MAX_ACTIVE_SUBNETS
+                        Maximum active /24 subnets to sweep within a /16 (default: 32).
+  --ping-timeout PING_TIMEOUT
+                        ICMP ping timeout in seconds (default: 1.0).
+  --tcp-timeout TCP_TIMEOUT
+                        TCP connect probe timeout in seconds (default: 0.35).
+  --mock-config, --fixture-config, --discovery-fixture MOCK_CONFIG
+                        Optional JSON file providing mock ping/TCP/ARP/rDNS callbacks or pre-
+                        discovered hosts.
+  --fixtures            Use deterministic offline discovery callbacks without live network
+                        traffic.
+  --router-arp ROUTER_ARP
+                        Optional router ARP table file (JSON records or ExtremeXOS/VOSS/ip-neigh
+                        CLI text) to enrich discovered hosts.
+  --dhcp-leases DHCP_LEASES
+                        Optional DHCP lease export file (JSON, ISC, CSV, or dnsmasq) to enrich
+                        discovered hosts.
+  --proxmox-snapshot PROXMOX_SNAPSHOT
+                        Optional Proxmox/Portainer snapshot JSON used to fill missing guest
+                        hostnames and MACs.
+  --evaluation-time, --observed-at EVALUATION_TIME
+                        Optional ISO-8601 UTC timestamp for discovery observation and
+                        classification.
+  --validate            Also run ClassificationEngine on the discovered Site snapshot.
+  --report              Also generate JSON, CSV, and Markdown validation reports.
+  --html-dashboard      Also generate self-contained interactive HTML5 validation dashboard.
+  --html-output HTML_OUTPUT
+                        Optional custom output path for the HTML5 validation dashboard.

@@ -1,0 +1,53 @@
+usage: sot-validator serve [-h] [--host HOST] [--port PORT] [--token TOKEN] [--allow-remote]
+                           [--snapshot SNAPSHOT] [--snapshot-dir SNAPSHOT_DIR]
+                           [--curation-db CURATION_DB] [--results-file RESULTS_FILE]
+                           [--site-id SITE_ID] [--once] [--check]
+                           [--site-ids SITE_IDS [SITE_IDS ...]] [--all-sites]
+                           [--batch-size BATCH_SIZE] [--rate-limit RATE_LIMIT] [--no-resume]
+                           [--fixtures] [--num-sites NUM_SITES] [--fixture-path FIXTURE_PATH]
+                           [--sql-dump SQL_DUMP] [--sqlite-path SQLITE_PATH] [--csv-dir CSV_DIR]
+                           [--json-export JSON_EXPORT] [--scrape-url SCRAPE_URL]
+
+options:
+  -h, --help            show this help message and exit
+  --host HOST           Bind address for the Workbench HTTP server (default: 127.0.0.1).
+  --port PORT           TCP port for the Workbench HTTP server (default: 5100).
+  --token TOKEN         Bearer token for workbench writes (default: a fresh random token per
+                        start).
+  --allow-remote        Allow binding --host to a non-loopback address (writes still need the
+                        token).
+  --snapshot, --snapshot-file SNAPSHOT
+                        Path to a Site JSON snapshot file or SnapshotStore directory.
+  --snapshot-dir SNAPSHOT_DIR
+                        Optional SnapshotStore directory when --snapshot is not specified.
+  --curation-db, --db-path CURATION_DB
+                        Path to SQLite CurationStore database or JSON file (defaults to in-
+                        memory).
+  --results-file RESULTS_FILE
+                        Optional validation_results.json file to seed initial classification
+                        results.
+  --site-id SITE_ID     Optional site ID to select when loading from a multi-site snapshot.
+  --once                Handle a single verification HTTP request and exit cleanly.
+  --check               Verify server binding and UI rendering, then exit immediately with code 0.
+  --site-ids SITE_IDS [SITE_IDS ...]
+                        Target site IDs (comma-separated or space-separated, e.g.
+                        site-001,site-002).
+  --all-sites           Process all available sites.
+  --batch-size BATCH_SIZE
+                        Number of sites per extraction batch (default: 10).
+  --rate-limit RATE_LIMIT
+                        Polite delay in seconds between per-site requests (default: 0.0).
+  --no-resume           Disable checkpoint resume and re-extract all target sites.
+  --fixtures            Use deterministic built-in FixtureSoTClient inventory.
+  --num-sites NUM_SITES
+                        Number of fixture sites to generate when --fixtures is set (default: 3).
+  --fixture-path FIXTURE_PATH
+                        Path to a JSON fixture file for FixtureSoTClient.
+  --sql-dump SQL_DUMP   Path to a read-only SQL dump file (.sql).
+  --sqlite-path SQLITE_PATH
+                        Path to a read-only SQLite database export.
+  --csv-dir CSV_DIR     Path to a directory containing SoT CSV export tables.
+  --json-export JSON_EXPORT
+                        Path to a JSON export file of SoT tables or sites.
+  --scrape-url SCRAPE_URL
+                        Base URL for read-only GET HTML scraping of the legacy SoT.

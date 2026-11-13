@@ -1,0 +1,44 @@
+usage: sot-validator remediate [-h] [--manifest MANIFEST] [--output-dir OUTPUT_DIR]
+                               [--journal-path JOURNAL_PATH] [--snapshot-dir SNAPSHOT_DIR]
+                               [--sqlite-db SQLITE_DB] [--confirm-write] [--strict-approval]
+                               [--execution-id EXECUTION_ID] [--reviewer REVIEWER]
+                               [--rollback-execution-id ROLLBACK_EXECUTION_ID]
+                               [--require-itsm-approval] [--itsm-ticket-id ITSM_TICKET_ID]
+                               [--itsm-tickets-file ITSM_TICKETS_FILE]
+                               [--itsm-ticket-file ITSM_TICKET_FILE] [--itsm-allow-scheduled]
+
+options:
+  -h, --help            show this help message and exit
+  --manifest, --execute-approved-plan MANIFEST
+                        Path to the operator-approved RemediationApprovalManifest JSON file.
+  --output-dir OUTPUT_DIR
+                        Directory to write remediate.sql, rollback.sql, remediation_journal.jsonl,
+                        and remediation_result.json.
+  --journal-path JOURNAL_PATH
+                        Explicit path to remediation_journal.jsonl (defaults to <output-
+                        dir>/remediation_journal.jsonl).
+  --snapshot-dir SNAPSHOT_DIR
+                        Optional directory containing SnapshotStore sites.
+  --sqlite-db SQLITE_DB
+                        Optional SQLite database path to execute SQL against when --confirm-write
+                        is passed.
+  --confirm-write       Explicitly confirm write execution (dry_run=False, confirm_write=True).
+                        Defaults to dry-run.
+  --strict-approval     Fail if any non-exempt entry in the manifest is not APPROVED.
+  --execution-id EXECUTION_ID
+                        Optional explicit execution ID.
+  --reviewer REVIEWER   Optional reviewer override.
+  --rollback-execution-id ROLLBACK_EXECUTION_ID
+                        Generate (and if --confirm-write, apply) a RollbackPlan from the journal
+                        for the given execution_id.
+  --require-itsm-approval
+                        Require an APPROVED ITSM change ticket with matching SHA-256 digest before
+                        executing.
+  --itsm-ticket-id ITSM_TICKET_ID
+                        Change ticket ID to verify in the ITSM governance sink.
+  --itsm-tickets-file, --itsm-sink-file ITSM_TICKETS_FILE
+                        Path to a JsonFileItsmSink file containing ITSM change tickets.
+  --itsm-ticket-file ITSM_TICKET_FILE
+                        Path to an individual ItsmTicketRequest JSON file.
+  --itsm-allow-scheduled
+                        Allow SCHEDULED ITSM change tickets in addition to APPROVED tickets.
