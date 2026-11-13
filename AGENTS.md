@@ -30,8 +30,9 @@
   - `quality/` — Phase 13 SoT data-quality conflict detector (`DataQualityChecker`, `QualityFinding`) with deterministic duplicate IP/MAC, out-of-block IP, orphan-reference and hostname-mismatch rules.
   - `enrichment/` — Offline-only IEEE OUI registry (`oui.py`: `OuiRegistry`, `OuiMatch`) that loads MA-L/MA-M/MA-S CSV exports with longest-prefix lookup and a `KNOWN_OUI_VENDORS` fallback, plus multicast / locally-administered MAC classification (`classify_mac`, `is_multicast`, `is_locally_administered`). Not yet wired into the CLI or the topology and discovery code.
   - `config/` — Unified TOML fleet configuration loader (`load_config(path) -> AppConfig`, `ConfigError`, `SecretValue`) validating `10.x.0.0/16` site blocks, `/24` active subnets, thresholds and concurrency caps; secrets must be `${env:NAME}` references resolved from the environment and are always redacted. Not yet wired to a CLI flag.
+  - `testing/` — Seeded, deterministic synthetic fleet generator (`synthetic.py`: `SyntheticFleetGenerator`, `SyntheticFleet`, `drift_site`) producing fake `synth-` sites with `02:` MACs inside `10.(i+1).0.0/16`, plus the shared timed pipeline runner (`pipeline.py`: `run_pipeline`, `PipelineTimings`) for classification, FDB mapping, snapshot diffing and the HTML dashboard.
   - `cli.py` — Unified CLI runner (`extract`, `validate`, `report`, `run`, `history`, `quarantine`, `remediate`, `reconcile`, `campaign`, `preflight`, `reclaim-ports`, `export-modern-sot` / `migrate-export`, `parity-check` / `migration-parity`, `ups-health`, `itsm` / `itsm-sync`, `discover` [with `--router-arp`, `--dhcp-leases`, `--proxmox-snapshot` enrichment], `serve` [e.g. `sot-validator serve --port <port>`], `curate`, `topology`, `fingerprint`, `map-ports`, `diff-scans`).
-- `tests/` — `pytest` unit and integration tests.
+- `tests/` — `pytest` unit and integration tests; `tests/perf/` holds the `perf`-marked 100-site pipeline performance budgets.
 - `examples/` — Example fleet configuration (`sot-validator.example.toml`).
 - `docs/` — Architecture, discovery notes, and SoT API/schema specifications.
 - `factory/` — Software factory scripts and gate configuration (`factory/checks.sh` and `factory/config.json` are protected paths).
@@ -63,4 +64,10 @@ Run `pytest` directly when tests are present:
 
 ```bash
 python3 -m pytest
+```
+
+Run the 100-site performance budgets in `tests/perf/` (marked `perf`; excluded from the default run by `addopts = "-m \"not perf\""` in `pyproject.toml`, and a later `-m perf` overrides it):
+
+```bash
+python3 -m pytest -m perf
 ```
