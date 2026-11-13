@@ -272,7 +272,12 @@ class BlastRadius:
 
 
 class PowerDependencyGraph:
-    """Acyclic device-to-source power graph supporting failure simulation."""
+    """Acyclic device-to-source power graph supporting failure simulation.
+
+    Roots: every UPS source is always a root, so tracing stops at the nearest
+    UPS even when utility feeds it. Utility is an unprotected external supply
+    and is a root only where a device reaches it without passing through a UPS.
+    """
 
     def __init__(self, feeds: Iterable[PowerFeed]) -> None:
         self.feeds: list[PowerFeed] = list(feeds)
@@ -281,7 +286,7 @@ class PowerDependencyGraph:
             self._feeds_by_device.setdefault(feed.device_id, []).append(feed)
         self.sources: set[str] = {feed.source_id for feed in self.feeds}
         fed = set(self._feeds_by_device)
-        self.roots: set[str] = {
+        self.roots: set[str] = set(self.ups_sources()) | {
             feed.source_id
             for feed in self.feeds
             if feed.source_id not in fed or feed.source_type == "utility"
@@ -341,6 +346,10 @@ class PowerDependencyGraph:
         if device_id not in self._roots_by_node:
             raise ValueError(f"Unknown power map ID: {device_id!r}")
         return set(self._roots_by_node[device_id])
+
+    def protected_roots(self, device_id: str) -> set[str]:
+        """Subset of ``power_roots(device_id)`` that are UPS sources."""
+        return self.power_roots(device_id) & set(self.ups_sources())
 
     def blast_radius(self, source_id: str) -> BlastRadius:
         if source_id not in self.sources:
