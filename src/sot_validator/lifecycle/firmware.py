@@ -55,7 +55,6 @@ _EXOS_PATTERN = re.compile(
     r"\b(ExtremeXOS|Switch\s*Engine)\s*\(([^()]*)\)\s*version\s+[vV]?(\d[\w.\-]*)",
     re.IGNORECASE,
 )
-_EXOS_FAMILY_PATTERN = re.compile(r"\b(?:ExtremeXOS|Switch\s*Engine)\b", re.IGNORECASE)
 _SWITCH_ENGINE_PATTERN = re.compile(r"switch\s*engine", re.IGNORECASE)
 # "VSP-7254XSQ (8.1.0.0) ..." and "5520-24T-FabricEngine (8.10.0.0) ...".
 _VOSS_PATTERN = re.compile(
@@ -103,11 +102,13 @@ class FirmwareParser:
     def parse(self, sys_descr: Any) -> Optional[FirmwareInfo]:
         if not isinstance(sys_descr, str) or not sys_descr.strip():
             return None
-        if _EXOS_FAMILY_PATTERN.search(sys_descr):
-            return self._parse_exos(sys_descr)
-        if _APC_PATTERN.search(sys_descr):
-            return self._parse_apc(sys_descr)
-        return self._parse_voss(sys_descr)
+        # Each family parser needs its own full header, so a keyword in another family's free
+        # text (for example "ExtremeXOS" in an APC string) only falls through to the next one.
+        return (
+            self._parse_exos(sys_descr)
+            or self._parse_apc(sys_descr)
+            or self._parse_voss(sys_descr)
+        )
 
     @staticmethod
     def _parse_exos(sys_descr: str) -> Optional[FirmwareInfo]:
@@ -142,6 +143,8 @@ class FirmwareParser:
 
     @staticmethod
     def _parse_apc(sys_descr: str) -> Optional[FirmwareInfo]:
+        if not _APC_PATTERN.search(sys_descr):
+            return None
         version_match = _APC_PF_PATTERN.search(sys_descr)
         if version_match is None:
             return None

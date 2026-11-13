@@ -124,6 +124,32 @@ def test_parse_exos_ignores_switch_engine_in_free_text(sys_descr):
     assert info == FirmwareInfo("extreme", "X460G2-48p-10G4", OS_EXOS, "31.7.1.4")
 
 
+@pytest.mark.parametrize(
+    ("sys_descr", "expected"),
+    [
+        (
+            "VSP-7254XSQ (8.1.0.0) managed via Switch Engine tooling",
+            FirmwareInfo("extreme", "VSP-7254XSQ", OS_VOSS, "8.1.0.0"),
+        ),
+        (
+            "VSP-7254XSQ (8.1.0.0) uplink to ExtremeXOS core and APC UPS",
+            FirmwareInfo("extreme", "VSP-7254XSQ", OS_VOSS, "8.1.0.0"),
+        ),
+        (
+            "APC Web/SNMP Management Card "
+            "(MB:v4.1.0 PF:v6.9.6 PN:apc_hw05_aos_696.bin ExtremeXOS)",
+            FirmwareInfo("apc", "hw05", OS_AOS, "6.9.6"),
+        ),
+        (
+            "APC Web/SNMP Management Card (MB:v4.1.0 PF:v6.9.6 MN:AP9631) near Switch Engine",
+            FirmwareInfo("apc", "AP9631", OS_AOS, "6.9.6"),
+        ),
+    ],
+)
+def test_parse_ignores_other_family_keywords_in_free_text(sys_descr, expected):
+    assert FirmwareParser().parse(sys_descr) == expected
+
+
 def test_parse_voss():
     info = FirmwareParser().parse(VOSS_DESCR)
     assert info == FirmwareInfo("extreme", "VSP-7254XSQ", OS_VOSS, "8.1.0.0")
