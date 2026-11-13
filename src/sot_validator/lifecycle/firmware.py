@@ -118,7 +118,12 @@ class FirmwareParser:
         version = _clean_version(match.group(3))
         if not platform or not version:
             return None
-        family = OS_SWITCH_ENGINE if _SWITCH_ENGINE_PATTERN.search(sys_descr) else OS_EXOS
+        # Decide from the header and platform tokens only, so free text after the version
+        # (for example "by Switch Engine team") cannot flip an EXOS string.
+        renamed = _SWITCH_ENGINE_PATTERN.search(match.group(1)) or _SWITCH_ENGINE_PATTERN.search(
+            platform
+        )
+        family = OS_SWITCH_ENGINE if renamed else OS_EXOS
         return FirmwareInfo(VENDOR_EXTREME, platform, family, version)
 
     @staticmethod
@@ -191,6 +196,7 @@ def compare_versions(a: str, b: str) -> int:
     if suffix_a is None or suffix_b is None:
         # A suffixed build sorts after the same base version without one.
         return _cmp(suffix_a is not None, suffix_b is not None)
+    # Only the suffix integers count, so digit-free suffixes such as "-a" and "-b" compare equal.
     return _cmp(suffix_a, suffix_b)
 
 

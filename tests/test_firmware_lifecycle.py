@@ -112,6 +112,18 @@ def test_parse_switch_engine(sys_descr, platform, version):
     assert info == FirmwareInfo("extreme", platform, OS_SWITCH_ENGINE, version)
 
 
+@pytest.mark.parametrize(
+    "sys_descr",
+    [
+        "ExtremeXOS (X460G2-48p-10G4) version 31.7.1.4 by Switch Engine team",
+        "ExtremeXOS (X460G2-48p-10G4) version 31.7.1.4 by release-manager SwitchEngine build",
+    ],
+)
+def test_parse_exos_ignores_switch_engine_in_free_text(sys_descr):
+    info = FirmwareParser().parse(sys_descr)
+    assert info == FirmwareInfo("extreme", "X460G2-48p-10G4", OS_EXOS, "31.7.1.4")
+
+
 def test_parse_voss():
     info = FirmwareParser().parse(VOSS_DESCR)
     assert info == FirmwareInfo("extreme", "VSP-7254XSQ", OS_VOSS, "8.1.0.0")
