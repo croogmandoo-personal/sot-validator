@@ -1,4 +1,4 @@
-"""Device type catalog, switch/router port builder, network role identifier, and topology graph builder."""
+"""Device type catalog, switch/router port builder, network role identifier, topology graph builder, and UPS power-dependency map."""
 
 from __future__ import annotations
 
@@ -34,9 +34,27 @@ from sot_validator.topology.identifier import (
     NetworkRoleIdentifier,
     VALID_HOST_ROLES,
 )
+from sot_validator.topology.power import (
+    BlastRadius,
+    PowerCycleError,
+    PowerDependencyGraph,
+    PowerFeed,
+    PowerMapLoadResult,
+    PowerMapLoader,
+    PowerMapProblem,
+    PowerRiskEntry,
+    VALID_POWER_SOURCE_TYPES,
+    device_criticality,
+    find_false_redundancy,
+    find_single_fed_critical,
+    generate_power_json_report,
+    generate_power_markdown_report,
+    rank_power_risk,
+)
 
 __all__ = [
     "BUILTIN_DEVICE_TEMPLATES",
+    "BlastRadius",
     "ConsolidatedRouter",
     "DevicePortManager",
     "DeviceTypeCatalog",
@@ -49,6 +67,13 @@ __all__ = [
     "NetworkRoleIdentifier",
     "PortClassificationResult",
     "PortSpec",
+    "PowerCycleError",
+    "PowerDependencyGraph",
+    "PowerFeed",
+    "PowerMapLoadResult",
+    "PowerMapLoader",
+    "PowerMapProblem",
+    "PowerRiskEntry",
     "SwitchFdbPortMapper",
     "TopologyEdge",
     "TopologyGraph",
@@ -59,5 +84,12 @@ __all__ = [
     "VALID_HOST_ROLES",
     "VALID_NODE_TYPES",
     "VALID_PORT_MODES",
+    "VALID_POWER_SOURCE_TYPES",
+    "device_criticality",
+    "find_false_redundancy",
+    "find_single_fed_critical",
+    "generate_power_json_report",
+    "generate_power_markdown_report",
     "normalize_mac_address",
+    "rank_power_risk",
 ]

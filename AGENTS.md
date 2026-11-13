@@ -25,15 +25,16 @@
   - `itsm/` — Phase 6 ServiceNow / Jira change-ticket governance and approval synchronization sink.
   - `discovery/` — Phase 7 two-stage `/16`-to-`/24` live subnet discovery scanner (`SubnetDiscoveryScanner`, `DiscoveryConfig`, `DiscoveredHost`), `Site` snapshot bootstrapper, Phase 10–12 service banner and certificate fingerprinter (`fingerprinter.py`: `ServiceBannerFingerprinter`, `RawServiceBanner`, `DeviceFingerprint`), Phase 10–12 `monitor.py` snapshot diff engine and drift alert dispatcher (`SnapshotDiffEngine`, `SnapshotDiffReport`, `ScanDriftEvent`, `DriftAlertDispatcher`), and Phase 10–12 router ARP / DHCP lease table enricher (`router_tables.py`: `RouterArpDhcpCollector`, `RouterTableParsers`).
   - `curation/` — Phase 8 SQLite/JSON operator curation overlay store (`CurationStore`, `ItemEditPatch`, `AuditLogEntry`, `apply_curation_overlay`).
-  - `topology/` — Phase 9 network role & VLAN heuristic identifier (`NetworkRoleIdentifier`, `ConsolidatedRouter`), device type catalog & port range builder (`DeviceTypeCatalog`, `DevicePortManager`), hierarchical topology graph builder (`TopologyGraphBuilder`, `TopologyGraph`), and Phase 10–12 switch FDB / Bridge-MIB MAC-to-port mapper with trunk/access inferrer (`fdb_mapper.py`: `FdbTableParser`, `SwitchFdbPortMapper`).
+  - `topology/` — Phase 9 network role & VLAN heuristic identifier (`NetworkRoleIdentifier`, `ConsolidatedRouter`), device type catalog & port range builder (`DeviceTypeCatalog`, `DevicePortManager`), hierarchical topology graph builder (`TopologyGraphBuilder`, `TopologyGraph`), Phase 10–12 switch FDB / Bridge-MIB MAC-to-port mapper with trunk/access inferrer (`fdb_mapper.py`: `FdbTableParser`, `SwitchFdbPortMapper`), and Phase 13–14 offline UPS power-dependency map, blast-radius and false-redundancy analysis with UPS risk ranking (`power.py`: `PowerMapLoader`, `PowerDependencyGraph`, `rank_power_risk`; not yet wired into the CLI).
   - `workbench/` — Phase 8/9 self-contained interactive HTTP Web Workbench server (`WorkbenchServer`, `WorkbenchState`), JSON REST API including read-only `GET /api/topology`, and HTML5/SVG topology & inventory curation UI (`render_workbench_html`) with a Topology Map tab and a switch faceplate.
   - `quality/` — Phase 13 SoT data-quality conflict detector (`DataQualityChecker`, `QualityFinding`) with deterministic duplicate IP/MAC, out-of-block IP, orphan-reference and hostname-mismatch rules.
   - `lifecycle/` — TLS certificate expiry and weak-crypto inventory (`CertificateInventory`, `CertificateRecord`, `CertificateFinding`) with expiry buckets, self-signed/SHA-1/small-RSA/hostname-mismatch rules and JSON/Markdown report helpers; no network I/O.
   - `enrichment/` — Offline-only IEEE OUI registry (`oui.py`: `OuiRegistry`, `OuiMatch`) that loads MA-L/MA-M/MA-S CSV exports with longest-prefix lookup and a `KNOWN_OUI_VENDORS` fallback, plus multicast / locally-administered MAC classification (`classify_mac`, `is_multicast`, `is_locally_administered`). Not yet wired into the CLI or the topology and discovery code.
   - `config/` — Unified TOML fleet configuration loader (`load_config(path) -> AppConfig`, `ConfigError`, `SecretValue`) validating `10.x.0.0/16` site blocks, `/24` active subnets, thresholds and concurrency caps; secrets must be `${env:NAME}` references resolved from the environment and are always redacted. Not yet wired to a CLI flag.
   - `observability/` — Standard-library structured logging and run metrics: `configure_logging` (text/JSON on the `sot_validator` logger), `get_logger`, `log_context` / `wrap_with_context` run/site context, `RedactionFilter` key-based secret redaction (`REDACTION_MASK`), thread-safe `MetricsRegistry`, atomic Prometheus textfile `write_textfile`, and the `register_starter_metrics` starter metric set (`sot_run_last_success_timestamp_seconds`, `sot_run_duration_seconds`, `sot_site_status`, `sot_records_total`, `sot_collector_errors_total`, `sot_probe_duration_seconds`).
+  - `testing/` — Seeded, deterministic synthetic fleet generator (`synthetic.py`: `SyntheticFleetGenerator`, `SyntheticFleet`, `drift_site`) producing fake `synth-` sites with `02:` MACs inside `10.(i+1).0.0/16`, plus the shared timed pipeline runner (`pipeline.py`: `run_pipeline`, `PipelineTimings`) for classification, FDB mapping, snapshot diffing and the HTML dashboard.
   - `cli.py` — Unified CLI runner (`extract`, `validate`, `report`, `run`, `history`, `quarantine`, `remediate`, `reconcile`, `campaign`, `preflight`, `reclaim-ports`, `export-modern-sot` / `migrate-export`, `parity-check` / `migration-parity`, `ups-health`, `itsm` / `itsm-sync`, `discover` [with `--router-arp`, `--dhcp-leases`, `--proxmox-snapshot` enrichment], `serve` [e.g. `sot-validator serve --port <port>`], `curate`, `topology`, `fingerprint`, `map-ports`, `diff-scans`).
-- `tests/` — `pytest` unit and integration tests.
+- `tests/` — `pytest` unit and integration tests; `tests/perf/` holds the `perf`-marked 100-site pipeline performance budgets.
 - `examples/` — Example fleet configuration (`sot-validator.example.toml`).
 - `docs/` — Architecture, discovery notes, and SoT API/schema specifications.
 - `factory/` — Software factory scripts and gate configuration (`factory/checks.sh` and `factory/config.json` are protected paths).
@@ -65,4 +66,10 @@ Run `pytest` directly when tests are present:
 
 ```bash
 python3 -m pytest
+```
+
+Run the 100-site performance budgets in `tests/perf/` (marked `perf`; excluded from the default run by `addopts = "-m \"not perf\""` in `pyproject.toml`, and a later `-m perf` overrides it):
+
+```bash
+python3 -m pytest -m perf
 ```
