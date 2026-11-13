@@ -1009,6 +1009,12 @@ class DnsDhcpLeaseCollector(SignalCollector):
         )
         raw_leases = dhcp_leases if dhcp_leases is not None else leases
         self._dhcp_leases: list[DhcpLeaseRecord] = self._coerce_dhcp_leases(raw_leases)
+        self._scoped_lease_cache: Optional[
+            tuple[
+                Optional[SubnetScopeGuard],
+                list[tuple[DhcpLeaseRecord, Optional[str]]],
+            ]
+        ] = None
 
     @staticmethod
     def _coerce_dns_records(
@@ -1365,19 +1371,24 @@ class DnsDhcpLeaseCollector(SignalCollector):
             )
 
         # Filter DHCP leases to allocated /24 scope and match against target
-        scoped_leases = [
-            lease
-            for lease in lease_pool
-            if self._is_lease_in_slash24_scope(lease, guard)
-        ]
+        cached = self._scoped_lease_cache
+        if lease_pool is self._dhcp_leases and cached is not None and cached[0] is guard:
+            # The collector's own lease pool only needs filtering once per guard
+            scoped_leases = cached[1]
+        else:
+            scoped_leases = [
+                (lease, lease.normalized_hostname)
+                for lease in lease_pool
+                if self._is_lease_in_slash24_scope(lease, guard)
+            ]
+            if lease_pool is self._dhcp_leases:
+                self._scoped_lease_cache = (guard, scoped_leases)
 
         matched_leases: list[DhcpLeaseRecord] = []
-        for lease in scoped_leases:
+        for lease, lease_host in scoped_leases:
             ip_match = bool(sot_ip_set and lease.ip in sot_ip_set)
             host_match = bool(
-                sot_host_set
-                and lease.normalized_hostname is not None
-                and lease.normalized_hostname in sot_host_set
+                sot_host_set and lease_host is not None and lease_host in sot_host_set
             )
             if ip_match or host_match:
                 matched_leases.append(lease)
