@@ -39,6 +39,7 @@ from typing import IO, Any, Optional, TypeVar, Union
 
 ROOT_LOGGER_NAME = "sot_validator"
 REDACTION_MASK = "***REDACTED***"
+CYCLE_MARKER = "<cycle>"
 SENSITIVE_KEY_FRAGMENTS: tuple[str, ...] = (
     "password",
     "secret",
@@ -68,7 +69,10 @@ _T = TypeVar("_T")
 
 
 def is_sensitive_key(key: Any) -> bool:
-    """Return True when ``key`` contains a secret-looking fragment, case-insensitively."""
+    """Return True when ``key`` contains a secret-looking fragment, case-insensitively.
+
+    Matching is by substring, so keys such as ``tokens_count`` are masked too.
+    """
     lowered = str(key).lower()
     return any(fragment in lowered for fragment in SENSITIVE_KEY_FRAGMENTS)
 
@@ -77,18 +81,26 @@ def redact(value: Any) -> Any:
     """Return a redacted copy of ``value``; the input object is never mutated.
 
     Dict values under sensitive keys become ``REDACTION_MASK``; dicts, lists and
-    tuples are walked at any depth. Other values are returned unchanged.
+    tuples are walked at any depth. A container that contains itself is replaced
+    by ``CYCLE_MARKER`` where it recurs. Other values are returned unchanged.
     """
+    return _redact(value, frozenset())
+
+
+def _redact(value: Any, path: frozenset[int]) -> Any:
+    if not isinstance(value, (Mapping, list, tuple)):
+        return value
+    if id(value) in path:
+        return CYCLE_MARKER
+    inner = path | {id(value)}
     if isinstance(value, Mapping):
         return {
-            key: REDACTION_MASK if is_sensitive_key(key) else redact(item)
+            key: REDACTION_MASK if is_sensitive_key(key) else _redact(item, inner)
             for key, item in value.items()
         }
     if isinstance(value, list):
-        return [redact(item) for item in value]
-    if isinstance(value, tuple):
-        return tuple(redact(item) for item in value)
-    return value
+        return [_redact(item, inner) for item in value]
+    return tuple(_redact(item, inner) for item in value)
 
 
 def _extra_fields(record: logging.LogRecord) -> dict[str, Any]:
@@ -142,8 +154,11 @@ class JsonFormatter(logging.Formatter):
             "run_id": _run_id_var.get(),
             "site_id": _site_id_var.get(),
         }
-        for key, value in _extra_fields(record).items():
-            field_name = f"extra_{key}" if key in _RESERVED_JSON_KEYS else key
+        extras = _extra_fields(record)
+        for key, value in extras.items():
+            field_name = key
+            while field_name in _RESERVED_JSON_KEYS or (field_name != key and field_name in extras):
+                field_name = f"extra_{field_name}"
             payload[field_name] = redact({key: value})[key]
         if record.exc_info:
             payload["exc_info"] = self.formatException(record.exc_info)
@@ -217,6 +232,8 @@ def configure_logging(
 
 def get_logger(name: str) -> logging.Logger:
     """Return a standard logger inside the ``sot_validator`` logger tree."""
+    if not name:
+        raise ValueError("Logger name must be a non-empty string")
     if name == ROOT_LOGGER_NAME or name.startswith(f"{ROOT_LOGGER_NAME}."):
         return logging.getLogger(name)
     return logging.getLogger(f"{ROOT_LOGGER_NAME}.{name}")

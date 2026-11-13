@@ -106,6 +106,15 @@ def test_reserved_extra_key_does_not_overwrite_core_fields():
     assert record["extra_ts"] == "fake"
 
 
+def test_prefixed_reserved_key_does_not_drop_existing_extra():
+    stream = io.StringIO()
+    configure_logging("INFO", fmt="json", stream=stream)
+    get_logger("x").info("m", extra={"ts": 1, "extra_ts": 2})
+    record = _json_lines(stream)[0]
+    assert record["extra_ts"] == 2
+    assert record["extra_extra_ts"] == 1
+
+
 def test_non_serialisable_extra_is_stringified():
     stream = io.StringIO()
     configure_logging("INFO", fmt="json", stream=stream)
@@ -194,6 +203,8 @@ def test_get_logger_names():
     assert get_logger("sot_validator.bar").name == "sot_validator.bar"
     assert get_logger("sot_validator").name == "sot_validator"
     assert get_logger("sot_validatorx").name == "sot_validator.sot_validatorx"
+    with pytest.raises(ValueError):
+        get_logger("")
 
 
 # --- Context -----------------------------------------------------------------
@@ -382,6 +393,29 @@ def test_non_finite_floats_are_strict_json():
     assert record["w"] == ["inf"]
 
 
+def test_cyclic_extra_does_not_raise():
+    stream = io.StringIO()
+    configure_logging("INFO", fmt="json", stream=stream)
+    loop = []
+    loop.append(loop)
+    nested = {"name": "h1"}
+    nested["self"] = nested
+    get_logger("x").info("m", extra={"loop": loop, "nested": nested})
+    record = json.loads(stream.getvalue())
+    assert record["loop"] == ["<cycle>"]
+    assert record["nested"] == {"name": "h1", "self": "<cycle>"}
+
+    text = io.StringIO()
+    configure_logging("INFO", fmt="text", stream=text)
+    get_logger("x").info("m", extra={"loop": loop})
+    assert 'loop=["<cycle>"]' in text.getvalue()
+
+
+def test_shared_non_cyclic_containers_are_not_marked():
+    shared = {"a": 1}
+    assert redact({"x": shared, "y": [shared, shared]}) == {"x": {"a": 1}, "y": [{"a": 1}, {"a": 1}]}
+
+
 def test_message_text_is_not_scanned():
     stream = io.StringIO()
     configure_logging("INFO", fmt="json", stream=stream)
@@ -448,11 +482,21 @@ def test_gauge_operations():
     assert lines[2:] == ['g{site="a"} 4', 'g{site="b"} 1.5']
 
 
-def test_label_named_like_parameter_is_allowed():
+def test_update_values_accept_keyword_form():
     registry = MetricsRegistry()
-    counter = registry.counter("c", "C", ("amount",))
-    counter.inc(2, amount="x")
-    assert 'c{amount="x"} 2' in registry.render().splitlines()
+    counter = registry.counter("c", "C", ("site",))
+    counter.inc(amount=2, site="x")
+    counter.inc(site="x")
+    gauge = registry.gauge("g", "G")
+    gauge.set(value=5)
+    gauge.inc(amount=2)
+    gauge.dec(amount=3)
+    hist = registry.histogram("h", "H", buckets=(1.0,))
+    hist.observe(value=0.5)
+    lines = registry.render().splitlines()
+    assert 'c{site="x"} 3' in lines
+    assert "g 4" in lines
+    assert "h_count 1" in lines
 
 
 @pytest.mark.parametrize("name", ["1bad", "bad-name", "", "has space", "bad-name\n", "good_total\n"])
