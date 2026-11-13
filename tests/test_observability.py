@@ -426,6 +426,25 @@ def test_non_string_extra_key_does_not_raise(fmt):
         assert '1="v"' in output
 
 
+@pytest.mark.parametrize(
+    "extra",
+    [
+        {1: "a", "1": "b"},
+        {"1": "b", 1: "a"},
+        {1: "a", "1": "b", "extra_1": "c"},
+        {"extra_ts": "c", "ts": "a"},
+    ],
+)
+def test_json_extra_names_never_overwrite_each_other(extra):
+    stream = io.StringIO()
+    configure_logging("INFO", fmt="json", stream=stream)
+    get_logger("x").info("m", extra=extra)
+    record = _json_lines(stream)[0]
+    core = {"ts", "level", "logger", "msg", "run_id", "site_id"}
+    extra_values = sorted(v for k, v in record.items() if k not in core)
+    assert extra_values == sorted(extra.values())
+
+
 def test_shared_non_cyclic_containers_are_not_marked():
     shared = {"a": 1}
     assert redact({"x": shared, "y": [shared, shared]}) == {"x": {"a": 1}, "y": [{"a": 1}, {"a": 1}]}

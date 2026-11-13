@@ -155,9 +155,15 @@ class JsonFormatter(logging.Formatter):
             "site_id": _site_id_var.get(),
         }
         extras = _extra_fields(record)
+        names = {str(key) for key in extras}
         for key, value in extras.items():
-            field_name = key
-            while field_name in _RESERVED_JSON_KEYS or (field_name != key and field_name in extras):
+            own_name = str(key)
+            field_name = own_name
+            while (
+                field_name in _RESERVED_JSON_KEYS
+                or field_name in payload
+                or (field_name != own_name and field_name in names)
+            ):
                 field_name = f"extra_{field_name}"
             payload[field_name] = redact({key: value})[key]
         if record.exc_info:
