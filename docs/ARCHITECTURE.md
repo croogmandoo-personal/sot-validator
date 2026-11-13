@@ -147,6 +147,9 @@ Once existing SoT records are validated and stale records are safely quarantined
 - **Interactive HTML Operations Dashboard & Unified CLI (`src/sot_validator/reporting/dashboard.py`, `src/sot_validator/cli/`)**:
   - Generates a self-contained, zero-dependency interactive HTML report (`dashboard_report.html`) featuring per-site `/24` subnet health cards, classification charts, stale-streak quarantine queues, untracked asset reconciliation tables, and client-side search/filtering.
   - Extends `python3 -m sot_validator` with `history`, `quarantine`, `remediate`, `reconcile`, and `campaign` subcommands.
+- **Fleet-Wide Site Health Scorecard & Trend Report (`src/sot_validator/reporting/fleet.py`)**:
+  - `FleetScorer` scores each site 0–100 from up to five optional dimensions (records, quality, certificates, firmware, drift) with configurable `FleetScoreWeights`, renormalising over the dimensions present, and returns `SiteScorecard` records with an `improving` / `stable` / `degrading` / `new` trend. `render_fleet_markdown` and `render_fleet_html` produce a deterministic Markdown report and a self-contained, sortable HTML report.
+  - The previous score is supplied by the caller (the ledger stores no per-site scores) and drift counts come from `HistoryStore.detect_drift`. Library only: not yet wired into the CLI.
 
 ### Phase 4: Enterprise Windows/AD & DNS/DHCP Correlation, Extreme Switch Port/PoE Reclamation & Live Pilot Cutover
 With ~90% of VMs running Windows and ~100 sites running Extreme Networks switches and APC UPSs, Phase 4 deepens enterprise signal coverage and automates safe switch port & PoE reclamation:
