@@ -700,3 +700,74 @@ def test_rank_power_risk_stringly_flags_and_duplicate_records() -> None:
             3,
             3,
         )
+
+
+# ---------------------------------------------------------------------------
+# Utility-fed UPS roots
+# ---------------------------------------------------------------------------
+
+
+def test_utility_fed_ups_blast_radius_at_chain_depth() -> None:
+    graph = PowerDependencyGraph(
+        [
+            _feed("UPS-A", "grid", "utility"),
+            _feed("PDU-1", "UPS-A", "ups"),
+            _feed("OG-1", "PDU-1", "pdu"),
+            _feed("rtr-01", "OG-1", "outlet_group"),
+        ]
+    )
+    radius = graph.blast_radius("UPS-A")
+    assert radius.loses_all_power == ["rtr-01"]
+    assert radius.loses_redundancy == []
+    assert graph.power_roots("rtr-01") == {"UPS-A"}
+    assert graph.end_devices == ["rtr-01"]
+
+
+def test_false_redundancy_behind_utility_fed_ups() -> None:
+    graph = PowerDependencyGraph(
+        [
+            _feed("UPS-A", "grid", "utility"),
+            _feed("PDU-1", "UPS-A", "ups"),
+            _feed("PDU-2", "UPS-A", "ups"),
+            _feed("core-01", "PDU-1", "pdu", psu="PSU1"),
+            _feed("core-01", "PDU-2", "pdu", psu="PSU2"),
+        ]
+    )
+    assert find_false_redundancy(graph) == ["core-01"]
+
+
+def test_utility_fed_ups_plus_utility_dual_feed() -> None:
+    graph = PowerDependencyGraph(
+        [
+            _feed("UPS-A", "grid", "utility"),
+            _feed("rtr-01", "UPS-A", "ups", psu="PSU1"),
+            _feed("rtr-01", "grid", "utility", psu="PSU2"),
+        ]
+    )
+    assert graph.power_roots("rtr-01") == {"UPS-A", "grid"}
+    assert graph.protected_roots("rtr-01") == {"UPS-A"}
+    assert find_single_fed_critical(_site(), graph) == []
+    assert find_false_redundancy(graph) == []
+    radius = graph.blast_radius("UPS-A")
+    assert radius.loses_all_power == []
+    assert radius.loses_redundancy == ["rtr-01"]
+
+
+def test_utility_root_only_when_reached_without_ups() -> None:
+    # Feed order must not change which roots are UPS-protected.
+    feeds = [
+        _feed("UPS-A", "grid", "utility"),
+        _feed("PDU-1", "UPS-A", "ups"),
+        _feed("PDU-2", "grid", "utility"),
+        _feed("core-01", "PDU-1", "pdu", psu="PSU1"),
+        _feed("core-01", "PDU-2", "pdu", psu="PSU2"),
+        _feed("acc-01", "PDU-1", "pdu"),
+    ]
+    for ordered in (feeds, list(reversed(feeds))):
+        graph = PowerDependencyGraph(ordered)
+        assert graph.power_roots("acc-01") == {"UPS-A"}
+        assert graph.power_roots("core-01") == {"UPS-A", "grid"}
+        assert graph.protected_roots("core-01") == {"UPS-A"}
+        assert graph.protected_roots("PDU-2") == set()
+        with pytest.raises(ValueError):
+            graph.protected_roots("nope")
